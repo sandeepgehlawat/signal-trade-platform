@@ -1,0 +1,21 @@
+{
+  "name": "signal-trade-platform",
+  "version": "1.0.0",
+  "description": "Signal Trade Platform - Website, Feed Server, and API",
+  "scripts": {
+    "dev": "bun run api/server.ts",
+    "serve": "bun run api/server.ts",
+    "feed": "bun run feed/server.ts",
+    "web": "cd web && npm run dev",
+    "start": "concurrently \"bun run serve\" \"bun run feed\" \"npm run web --prefix web\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/bun": "latest",
+    "concurrently": "^8.2.2"
+  }
+}

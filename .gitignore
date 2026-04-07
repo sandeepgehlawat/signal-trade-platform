@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Lock files (optional - uncomment if you want to ignore)
+# bun.lock
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+signal-trade.db

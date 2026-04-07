@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+:root {
+  --background: #e8ecf1;
+  --surface: #eef1f6;
+  --foreground: #2b3245;
+  --muted: #6b7388;
+  --accent: #8aa6c1;
+  --bull: #8fcfa8;
+  --bear: #e3a3a3;
+  --neutral: #b8bccb;
+
+  --neo-light: #ffffff;
+  --neo-dark: #c4c9d4;
+
+  --shadow-raised: 9px 9px 22px var(--neo-dark), -9px -9px 22px var(--neo-light);
+  --shadow-raised-sm: 5px 5px 12px var(--neo-dark), -5px -5px 12px var(--neo-light);
+  --shadow-pressed: inset 6px 6px 14px var(--neo-dark), inset -6px -6px 14px var(--neo-light);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-bull: var(--bull);
+  --color-bear: var(--bear);
+  --color-neutral: var(--neutral);
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+html, body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@utility neo-raised {
+  background: var(--background);
+  box-shadow: var(--shadow-raised);
+  border-radius: 1.5rem;
+}
+
+@utility neo-raised-sm {
+  background: var(--background);
+  box-shadow: var(--shadow-raised-sm);
+  border-radius: 1rem;
+}
+
+@utility neo-pressed {
+  background: var(--background);
+  box-shadow: var(--shadow-pressed);
+  border-radius: 1rem;
+}
+
+@utility neo-button {
+  background: var(--background);
+  box-shadow: var(--shadow-raised-sm);
+  border-radius: 1rem;
+  transition: box-shadow 180ms ease, transform 120ms ease, color 180ms ease;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  cursor: pointer;
+}
+@utility neo-button-active {
+  box-shadow: var(--shadow-pressed);
+  transform: translateY(1px) scale(0.98);
+}
+
+.neo-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 6px 6px 14px var(--neo-dark), -6px -6px 14px var(--neo-light);
+}
+.neo-button:active {
+  box-shadow: var(--shadow-pressed);
+  transform: translateY(1px) scale(0.98);
+}
+.neo-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+a.neo-card-link {
+  display: block;
+  transition: transform 180ms ease;
+}
+a.neo-card-link:hover { transform: translateY(-2px); }
+a.neo-card-link:active { transform: translateY(1px) scale(0.995); }
