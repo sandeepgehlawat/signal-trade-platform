@@ -102,8 +102,8 @@ async function getClobClient(): Promise<ClobClient> {
     if (!creds) {
       console.log("[pm] Deriving API credentials...");
       const derivedCreds = await clobClient.createOrDeriveApiCreds();
-      console.log("[pm] API Key:", derivedCreds.key);
-      console.log("[pm] Save these to .env as PM_API_KEY, PM_API_SECRET, PM_PASSPHRASE");
+      // SECURITY: Do not log credentials - user must check derivation manually
+      console.log("[pm] Credentials derived successfully. Set PM_API_KEY, PM_API_SECRET, PM_PASSPHRASE in .env");
 
       // Reinitialize with derived creds
       clobClient = new ClobClient(

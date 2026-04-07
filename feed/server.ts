@@ -27,9 +27,50 @@ import {
   publishSignal,
 } from "./publisher";
 import type { TradePost } from "../types";
-import { randomBytes } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 
 const FEED_PORT = parseInt(process.env.FEED_PORT || "3462");
+const INTERNAL_SECRET = process.env.FEED_INTERNAL_SECRET || "dev_secret_change_in_prod";
+
+// ============================================================================
+// CORS CONFIGURATION
+// ============================================================================
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  "http://localhost:3000",
+  "http://localhost:3460",
+  "http://localhost:3462",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3460",
+];
+
+const ALLOWED_ORIGINS = new Set(
+  process.env.CORS_ALLOWED_ORIGINS
+    ? process.env.CORS_ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+    : DEFAULT_ALLOWED_ORIGINS
+);
+
+const CORS_DEV_MODE = process.env.NODE_ENV !== "production";
+
+function getCorsOrigin(req: Request): string {
+  const origin = req.headers.get("Origin");
+  if (CORS_DEV_MODE && origin) return origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) return origin;
+  return DEFAULT_ALLOWED_ORIGINS[0];
+}
+
+// Request context for CORS
+let currentRequest: Request | null = null;
+
+// Constant-time string comparison to prevent timing attacks
+function safeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    const bufA = Buffer.from(a);
+    timingSafeEqual(bufA, bufA); // Maintain constant time even on length mismatch
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 // ============================================================================
 // AUTHENTICATION
@@ -61,11 +102,69 @@ function validateRequest(req: Request): { key: ValidatedKey } | { error: string;
 }
 
 // ============================================================================
+// IP-BASED CONNECTION LIMITS (DoS protection)
+// ============================================================================
+
+const MAX_CONNECTIONS_PER_IP = 10;
+const ipConnections = new Map<string, Set<string>>(); // IP -> Set of connectionIds
+
+function getClientIp(req: Request): string {
+  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown";
+}
+
+function trackIpConnection(ip: string, connectionId: string): boolean {
+  if (!ipConnections.has(ip)) {
+    ipConnections.set(ip, new Set());
+  }
+  const connections = ipConnections.get(ip)!;
+
+  if (connections.size >= MAX_CONNECTIONS_PER_IP) {
+    return false;
+  }
+
+  connections.add(connectionId);
+  return true;
+}
+
+function removeIpConnection(ip: string, connectionId: string): void {
+  const connections = ipConnections.get(ip);
+  if (connections) {
+    connections.delete(connectionId);
+    if (connections.size === 0) {
+      ipConnections.delete(ip);
+    }
+  }
+}
+
+// ============================================================================
 // SSE ENDPOINT
 // ============================================================================
 
 function createSseResponse(req: Request, key: ValidatedKey): Response {
   const connectionId = `conn_${Date.now()}_${randomBytes(4).toString("hex")}`;
+  const corsOrigin = getCorsOrigin(req);
+  const clientIp = getClientIp(req);
+
+  // Check IP-based connection limit first (DoS protection)
+  if (!trackIpConnection(clientIp, connectionId)) {
+    console.warn(`[feed] IP ${clientIp} exceeded connection limit`);
+    return new Response(
+      JSON.stringify({
+        error: "Too many connections from this IP",
+        limit: MAX_CONNECTIONS_PER_IP,
+      }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": corsOrigin,
+          "Access-Control-Allow-Credentials": "true",
+        },
+      }
+    );
+  }
 
   // Check connection limit
   if (!trackConnection(key.userId, connectionId, key.tier)) {
@@ -79,7 +178,8 @@ function createSseResponse(req: Request, key: ValidatedKey): Response {
         status: 429,
         headers: {
           "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Origin": corsOrigin,
+          "Access-Control-Allow-Credentials": "true",
         },
       }
     );
@@ -125,6 +225,7 @@ function createSseResponse(req: Request, key: ValidatedKey): Response {
       // Clean up on disconnect
       removeSubscriber(connectionId);
       removeConnection(key.userId, connectionId);
+      removeIpConnection(clientIp, connectionId);
       console.log(`[feed] Connection closed: ${connectionId}`);
     },
   });
@@ -134,8 +235,9 @@ function createSseResponse(req: Request, key: ValidatedKey): Response {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       "Connection": "keep-alive",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": corsOrigin,
       "Access-Control-Allow-Headers": "Authorization",
+      "Access-Control-Allow-Credentials": "true",
     },
   });
 }
@@ -145,28 +247,34 @@ function createSseResponse(req: Request, key: ValidatedKey): Response {
 // ============================================================================
 
 function jsonResponse(data: unknown, status = 200): Response {
+  const origin = currentRequest ? getCorsOrigin(currentRequest) : DEFAULT_ALLOWED_ORIGINS[0];
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": origin,
       "Access-Control-Allow-Headers": "Authorization",
+      "Access-Control-Allow-Credentials": "true",
     },
   });
 }
 
 async function handleRequest(req: Request): Promise<Response> {
+  currentRequest = req;
   const url = new URL(req.url);
   const path = url.pathname;
   const method = req.method;
 
   // CORS preflight
   if (method === "OPTIONS") {
+    const origin = getCorsOrigin(req);
     return new Response(null, {
       headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Internal-Secret",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Max-Age": "86400",
       },
     });
   }
@@ -194,7 +302,13 @@ async function handleRequest(req: Request): Promise<Response> {
   }
 
   // Internal publish endpoint (called by API server)
+  // Protected by internal secret to prevent unauthorized signal injection
   if (method === "POST" && path === "/feed/publish") {
+    const internalSecret = req.headers.get("X-Internal-Secret");
+    if (!internalSecret || !safeCompare(internalSecret, INTERNAL_SECRET)) {
+      return jsonResponse({ error: "Unauthorized" }, 401);
+    }
+
     try {
       const body = await req.json() as TradePost;
       publishSignal(body);

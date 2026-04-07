@@ -45,14 +45,27 @@ import {
   revokeApiKey,
   maskKey,
 } from "../feed/keys";
+import { resolve, normalize, join } from "path";
+import { timingSafeEqual } from "crypto";
+import {
+  validateInput,
+  processInputSchema,
+  createKeySchema,
+  createSubscriptionSchema,
+  closeTradeSchema,
+} from "../shared/validation";
 // Publish signal to feed server via HTTP
 const FEED_SERVER_URL = process.env.FEED_SERVER_URL || "http://localhost:3462";
+const FEED_INTERNAL_SECRET = process.env.FEED_INTERNAL_SECRET || "dev_secret_change_in_prod";
 
 async function publishSignalToFeed(trade: import("../types").TradePost): Promise<void> {
   try {
     const response = await fetch(`${FEED_SERVER_URL}/feed/publish`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Secret": FEED_INTERNAL_SECRET,
+      },
       body: JSON.stringify(trade),
     });
     if (!response.ok) {
@@ -69,11 +82,60 @@ const PORT = parseInt(process.env.PORT || "3460");
 const FRONTEND_PATH = new URL("../frontend", import.meta.url).pathname;
 
 // ============================================================================
+// CORS CONFIGURATION
+// ============================================================================
+
+// Allowed origins - can be configured via CORS_ALLOWED_ORIGINS env var (comma-separated)
+const DEFAULT_ALLOWED_ORIGINS = [
+  "http://localhost:3000",
+  "http://localhost:3460",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3460",
+];
+
+const ALLOWED_ORIGINS = new Set(
+  process.env.CORS_ALLOWED_ORIGINS
+    ? process.env.CORS_ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+    : DEFAULT_ALLOWED_ORIGINS
+);
+
+// In development mode, allow all origins
+const CORS_DEV_MODE = process.env.NODE_ENV !== "production";
+
+function getCorsOrigin(req: Request): string {
+  const origin = req.headers.get("Origin");
+
+  // In dev mode, reflect the origin back (allow all)
+  if (CORS_DEV_MODE && origin) {
+    return origin;
+  }
+
+  // In production, only allow configured origins
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    return origin;
+  }
+
+  // Fallback for same-origin requests (no Origin header)
+  return DEFAULT_ALLOWED_ORIGINS[0];
+}
+
+// ============================================================================
 // AUTHENTICATION
 // ============================================================================
 
 const API_TOKEN = process.env.SIGNAL_TRADE_API_TOKEN || process.env.API_TOKEN;
 const AUTH_ENABLED = !!API_TOKEN;
+
+// Constant-time string comparison to prevent timing attacks
+function safeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    // Compare against self to maintain constant time even on length mismatch
+    const bufA = Buffer.from(a);
+    timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 function checkAuth(req: Request): boolean {
   if (!AUTH_ENABLED) return true;
@@ -84,20 +146,60 @@ function checkAuth(req: Request): boolean {
   const [scheme, token] = authHeader.split(" ");
   if (scheme !== "Bearer" || !token) return false;
 
-  return token === API_TOKEN;
+  return safeCompare(token, API_TOKEN!);
 }
 
 function authRequired(req: Request): Response | null {
   if (checkAuth(req)) return null;
 
+  const origin = getCorsOrigin(req);
   return new Response(JSON.stringify({ error: "Unauthorized. Set Authorization: Bearer <token>" }), {
     status: 401,
     headers: {
       "Content-Type": "application/json",
       "WWW-Authenticate": "Bearer",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
     },
   });
+}
+
+// ============================================================================
+// IP EXTRACTION (with proxy validation)
+// ============================================================================
+
+// Only trust proxy headers if explicitly configured (e.g., when behind nginx/cloudflare)
+const TRUST_PROXY = process.env.TRUST_PROXY === "true";
+
+// Trusted proxy IPs (only used when TRUST_PROXY=true)
+const TRUSTED_PROXIES = new Set(
+  process.env.TRUSTED_PROXY_IPS
+    ? process.env.TRUSTED_PROXY_IPS.split(",").map((ip) => ip.trim())
+    : ["127.0.0.1", "::1"] // Default: localhost only
+);
+
+/**
+ * Extract client IP address safely.
+ * Only trusts X-Forwarded-For when TRUST_PROXY=true
+ * This prevents IP spoofing attacks on rate limiting.
+ */
+function getClientIp(req: Request): string {
+  if (TRUST_PROXY) {
+    // When behind a trusted proxy, use the forwarded headers
+    const xForwardedFor = req.headers.get("x-forwarded-for");
+    if (xForwardedFor) {
+      // Take the first IP (client IP) from the chain
+      const clientIp = xForwardedFor.split(",")[0]?.trim();
+      if (clientIp) return clientIp;
+    }
+
+    const xRealIp = req.headers.get("x-real-ip");
+    if (xRealIp) return xRealIp;
+  }
+
+  // Default: return a generic identifier (Bun doesn't expose socket IP in fetch handler)
+  // In production behind a proxy, TRUST_PROXY should be set
+  return "direct-connection";
 }
 
 // ============================================================================
@@ -437,12 +539,17 @@ async function fetchCurrentPrice(ticker: string, platform: Platform): Promise<nu
 // HTTP HANDLERS
 // ============================================================================
 
+// Request context for CORS - set by handleRequest
+let currentRequest: Request | null = null;
+
 function jsonResponse(data: unknown, status = 200): Response {
+  const origin = currentRequest ? getCorsOrigin(currentRequest) : DEFAULT_ALLOWED_ORIGINS[0];
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
     },
   });
 }
@@ -480,12 +587,14 @@ function sseResponse(runId: string): Response {
     },
   });
 
+  const origin = currentRequest ? getCorsOrigin(currentRequest) : DEFAULT_ALLOWED_ORIGINS[0];
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       "Connection": "keep-alive",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
     },
   });
 }
@@ -493,18 +602,18 @@ function sseResponse(runId: string): Response {
 async function handleProcess(req: Request): Promise<Response> {
   try {
     const body = await req.json();
-    const input = body.input || body.url || body.text;
-    const autoSave = body.auto_save !== false;
 
-    if (!input) {
-      return jsonResponse({ error: "Missing input field" }, 400);
+    // Support multiple input field names for backwards compatibility
+    const rawInput = body.input || body.url || body.text;
+    const normalizedBody = { input: rawInput, auto_save: body.auto_save };
+
+    // Validate input with Zod
+    const validation = validateInput(processInputSchema, normalizedBody);
+    if (!validation.success) {
+      return jsonResponse({ error: validation.error }, 400);
     }
 
-    // Basic input validation
-    if (typeof input !== "string" || input.length > 10000) {
-      return jsonResponse({ error: "Invalid input" }, 400);
-    }
-
+    const { input, auto_save: autoSave } = validation.data;
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     // Start processing in background
@@ -747,9 +856,20 @@ async function handleCreateApiKey(req: Request): Promise<Response> {
 
   try {
     const body = await req.json();
-    const userId = body.user_id || `user_${Date.now()}`;
-    const tier = body.tier === "paid" ? "paid" : "free";
 
+    // Generate default user_id if not provided
+    const rawBody = {
+      user_id: body.user_id || `user_${Date.now()}`,
+      tier: body.tier,
+    };
+
+    // Validate input
+    const validation = validateInput(createKeySchema, rawBody);
+    if (!validation.success) {
+      return jsonResponse({ error: validation.error }, 400);
+    }
+
+    const { user_id: userId, tier } = validation.data;
     const result = createApiKey(userId, tier);
 
     return jsonResponse({
@@ -804,15 +924,15 @@ async function handleRevokeApiKey(keyId: string, req: Request): Promise<Response
 async function handleCreateSubscription(req: Request): Promise<Response> {
   try {
     const body = await req.json();
-    const userId = body.user_id;
 
-    if (!userId) {
-      return jsonResponse({ error: "user_id required" }, 400);
+    // Validate input with Zod
+    const validation = validateInput(createSubscriptionSchema, body);
+    if (!validation.success) {
+      return jsonResponse({ error: validation.error }, 400);
     }
 
-    const tier = body.tier === "paid" ? "paid" : "free";
+    const { user_id: userId, tier, billing_period: billingPeriod } = validation.data;
     const amountCents = tier === "paid" ? 500 : 0; // $5/week for paid
-    const billingPeriod = body.billing_period === "monthly" ? "monthly" : "weekly";
 
     // Calculate expiry
     const expiresAt = new Date();
@@ -921,22 +1041,26 @@ async function handleGetSignals(req: Request): Promise<Response> {
 // ============================================================================
 
 async function handleRequest(req: Request): Promise<Response> {
+  // Set current request for CORS handling
+  currentRequest = req;
+
   const url = new URL(req.url);
   const path = url.pathname;
   const method = req.method;
 
-  // Get client IP for rate limiting
-  const ip = req.headers.get("x-forwarded-for") ||
-    req.headers.get("x-real-ip") ||
-    "unknown";
+  // Get client IP for rate limiting (with proxy validation)
+  const ip = getClientIp(req);
 
   // CORS preflight
   if (method === "OPTIONS") {
+    const origin = getCorsOrigin(req);
     return new Response(null, {
       headers: {
-        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Max-Age": "86400", // Cache preflight for 24 hours
       },
     });
   }
@@ -1038,8 +1162,17 @@ async function handleRequest(req: Request): Promise<Response> {
   }
 
   // Serve static files from frontend/
+  // Protected against path traversal attacks
   if (method === "GET" && path.startsWith("/static/")) {
-    const filePath = `${FRONTEND_PATH}${path.slice(7)}`;
+    const requestedPath = path.slice(7); // Remove "/static"
+    const normalizedPath = normalize(requestedPath).replace(/^(\.\.[\/\\])+/, "");
+    const filePath = resolve(FRONTEND_PATH, normalizedPath);
+
+    // Ensure the resolved path is within FRONTEND_PATH
+    if (!filePath.startsWith(resolve(FRONTEND_PATH))) {
+      return jsonResponse({ error: "Forbidden" }, 403);
+    }
+
     const file = Bun.file(filePath);
     if (await file.exists()) {
       return new Response(file);
