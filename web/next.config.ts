@@ -34,10 +34,8 @@ const nextConfig: NextConfig = {
         source: "/stats",
         destination: `${apiUrl}/stats`,
       },
-      {
-        source: "/health",
-        destination: `${apiUrl}/health`,
-      },
+      // Note: /health is handled by Next.js directly (app/health/route.ts)
+      // This allows Railway healthcheck to work before API server starts
       {
         source: "/subscribe/:path*",
         destination: `${apiUrl}/subscribe/:path*`,
