@@ -40,21 +40,22 @@ async function getJSON<T>(path: string): Promise<T> {
 }
 
 export const api = {
+  // Use /api/* paths to avoid conflict with Next.js pages
   trades: async (status?: "open" | "closed" | "expired"): Promise<Trade[]> => {
     const qs = status ? `?status=${status}` : "";
-    const json = await getJSON<{ trades: Trade[] }>(`/trades${qs}`);
+    const json = await getJSON<{ trades: Trade[] }>(`/api/trades${qs}`);
     return json.trades ?? [];
   },
   trade: async (id: string): Promise<Trade> => {
-    const json = await getJSON<{ trade: Trade }>(`/trades/${id}`);
+    const json = await getJSON<{ trade: Trade }>(`/api/trades/${id}`);
     return json.trade;
   },
   stats: async (): Promise<Stats> => {
-    const json = await getJSON<{ stats: Stats }>(`/stats`);
+    const json = await getJSON<{ stats: Stats }>(`/api/stats`);
     return json.stats ?? {};
   },
   process: async (input: string) => {
-    const res = await fetch(`${API_BASE}/process`, {
+    const res = await fetch(`${API_BASE}/api/process`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ input }),
@@ -63,14 +64,14 @@ export const api = {
     return res.json() as Promise<{ run_id: string; stream_url: string }>;
   },
   closeTrade: async (id: string, token?: string) => {
-    const res = await fetch(`${API_BASE}/trades/${id}/close`, {
+    const res = await fetch(`${API_BASE}/api/trades/${id}/close`, {
       method: "POST",
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     });
     if (!res.ok) throw new Error(`close → ${res.status}`);
     return res.json();
   },
-  streamUrl: (runId: string) => `${API_BASE}/stream/${runId}`,
+  streamUrl: (runId: string) => `${API_BASE}/api/stream/${runId}`,
 };
 
 export type StreamEvent = {
@@ -128,15 +129,15 @@ export type MockTrade = {
 
 export const feedApi = {
   signals: async (limit = 50): Promise<Signal[]> => {
-    const json = await getJSON<{ signals: Signal[] }>(`/signals?limit=${limit}`);
+    const json = await getJSON<{ signals: Signal[] }>(`/api/signals?limit=${limit}`);
     return json.signals ?? [];
   },
   news: async (limit = 50): Promise<NewsItem[]> => {
-    const json = await getJSON<{ news: NewsItem[] }>(`/news?limit=${limit}`);
+    const json = await getJSON<{ news: NewsItem[] }>(`/api/news?limit=${limit}`);
     return json.news ?? [];
   },
   mockTrades: async (limit = 50): Promise<MockTrade[]> => {
-    const json = await getJSON<{ mock_trades: MockTrade[] }>(`/mock-trades?limit=${limit}`);
+    const json = await getJSON<{ mock_trades: MockTrade[] }>(`/api/mock-trades?limit=${limit}`);
     return json.mock_trades ?? [];
   },
 };
@@ -171,7 +172,7 @@ export const keysApi = {
     key: ApiKey;
     warning: string;
   }> => {
-    const res = await fetch(`${API_BASE}/keys`, {
+    const res = await fetch(`${API_BASE}/api/keys`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId, tier }),
@@ -181,12 +182,12 @@ export const keysApi = {
   },
 
   list: async (userId: string): Promise<ApiKey[]> => {
-    const json = await getJSON<{ keys: ApiKey[] }>(`/keys/${userId}`);
+    const json = await getJSON<{ keys: ApiKey[] }>(`/api/keys/${userId}`);
     return json.keys ?? [];
   },
 
   revoke: async (keyId: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/keys/${keyId}`, {
+    const res = await fetch(`${API_BASE}/api/keys/${keyId}`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error(`revoke key → ${res.status}`);
@@ -195,11 +196,11 @@ export const keysApi = {
 
 export const subscriptionApi = {
   get: async (userId: string): Promise<{ subscription: Subscription | null; tier: string }> => {
-    return getJSON(`/subscribe/${userId}`);
+    return getJSON(`/api/subscribe/${userId}`);
   },
 
   create: async (userId: string, tier: "free" | "paid" = "paid", billingPeriod: "weekly" | "monthly" = "weekly"): Promise<{ subscription: Subscription }> => {
-    const res = await fetch(`${API_BASE}/subscribe`, {
+    const res = await fetch(`${API_BASE}/api/subscribe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId, tier, billing_period: billingPeriod }),
@@ -222,7 +223,7 @@ export const authApi = {
   // Get current user (from session cookie)
   me: async (): Promise<User | null> => {
     try {
-      const res = await fetch(`${API_BASE}/auth/me`, {
+      const res = await fetch(`${API_BASE}/api/auth/me`, {
         method: "GET",
         credentials: "include",
       });
@@ -236,7 +237,7 @@ export const authApi = {
 
   // Logout
   logout: async (): Promise<void> => {
-    await fetch(`${API_BASE}/auth/logout`, {
+    await fetch(`${API_BASE}/api/auth/logout`, {
       method: "POST",
       credentials: "include",
     });
@@ -244,7 +245,7 @@ export const authApi = {
 
   // Get Google OAuth URL
   getGoogleAuthUrl: async (): Promise<string> => {
-    const res = await fetch(`${API_BASE}/auth/google`, {
+    const res = await fetch(`${API_BASE}/api/auth/google`, {
       credentials: "include",
     });
     if (!res.ok) {
@@ -261,7 +262,7 @@ export const keysApiAuth = {
     key: ApiKey;
     warning: string;
   }> => {
-    const res = await fetch(`${API_BASE}/keys`, {
+    const res = await fetch(`${API_BASE}/api/keys`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -275,7 +276,7 @@ export const keysApiAuth = {
   },
 
   list: async (userId: string): Promise<ApiKey[]> => {
-    const res = await fetch(`${API_BASE}/keys/${userId}`, {
+    const res = await fetch(`${API_BASE}/api/keys/${userId}`, {
       credentials: "include",
     });
     if (!res.ok) {
@@ -287,7 +288,7 @@ export const keysApiAuth = {
   },
 
   revoke: async (keyId: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/keys/${keyId}`, {
+    const res = await fetch(`${API_BASE}/api/keys/${keyId}`, {
       method: "DELETE",
       credentials: "include",
     });
