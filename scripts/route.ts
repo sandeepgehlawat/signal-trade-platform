@@ -113,16 +113,58 @@ interface EvaluatedCandidate {
   cons: string[];
 }
 
-function evaluateCandidate(match: InstrumentMatch, keywords?: string[]): EvaluatedCandidate {
+function evaluateCandidate(match: InstrumentMatch, keywords?: string[], thesisText?: string): EvaluatedCandidate {
   const pros: string[] = [];
   const cons: string[] = [];
   let score = 0;
 
   // Check if this is a crypto asset trade (BTC, ETH, SOL, etc.)
-  const cryptoAssets = ["BTC", "ETH", "SOL", "ARB", "OP", "AVAX", "MATIC", "LINK", "UNI", "AAVE"];
+  const cryptoAssets = ["BTC", "ETH", "SOL", "ARB", "OP", "AVAX", "MATIC", "LINK", "UNI", "AAVE", "DOGE", "PEPE", "WIF", "BONK"];
   const isCryptoTrade = keywords?.some((k) =>
     cryptoAssets.includes(k.toUpperCase())
   );
+
+  // Check if thesis is about crypto markets in general (macro sentiment)
+  const macroKeywords = ["crypto", "bitcoin", "market", "risk-off", "risk-on", "bearish", "bullish", "dump", "pump", "fed", "rates", "macro"];
+  const fullText = (thesisText || "").toLowerCase() + " " + (keywords || []).join(" ").toLowerCase();
+  const isMacroSentiment = macroKeywords.some((k) => fullText.includes(k)) && !isCryptoTrade;
+
+  // Check if "trump" refers to TRUMP token (not political)
+  const tokenContextWords = ["token", "coin", "memecoin", "meme", "pump", "dip", "buying", "selling", "$trump", "perp"];
+  const isTrumpToken = fullText.includes("trump") && tokenContextWords.some((w) => fullText.includes(w));
+  const isTrumpPolitical = fullText.includes("trump") && !isTrumpToken;
+
+  // For macro sentiment without specific asset, prefer BTC on Hyperliquid
+  if (isMacroSentiment && match.ticker === "BTC" && match.platform === "hyperliquid") {
+    score += 80;
+    pros.push("BTC as proxy for overall crypto market sentiment");
+  }
+
+  // Penalize Polymarket for political Trump when we want TRUMP token
+  if (isTrumpToken && match.platform === "polymarket" && match.name?.toLowerCase().includes("trump")) {
+    score -= 50;
+    cons.push("Political prediction, not TRUMP token exposure");
+  }
+
+  // Penalize Polymarket Trump markets when thesis is about crypto sentiment
+  // (e.g., "Trump tariffs risk-off for crypto" should trade BTC, not Trump political markets)
+  const hasCryptoContext = fullText.includes("crypto") || fullText.includes("bitcoin") || fullText.includes("btc");
+  if (isTrumpPolitical && hasCryptoContext && match.platform === "polymarket" && match.name?.toLowerCase().includes("trump")) {
+    score -= 80;
+    cons.push("Political market irrelevant to crypto sentiment thesis");
+  }
+
+  // Penalize TRUMP perp for political Trump news
+  if (isTrumpPolitical && match.ticker === "TRUMP" && match.platform === "hyperliquid") {
+    score -= 30;
+    cons.push("TRUMP token not relevant to political news");
+  }
+
+  // Boost TRUMP perp for actual TRUMP token trades
+  if (isTrumpToken && match.ticker === "TRUMP" && match.platform === "hyperliquid") {
+    score += 60;
+    pros.push("Direct TRUMP token exposure");
+  }
 
   // Relevance scoring
   if (match.relevance === "direct") {
@@ -268,13 +310,47 @@ export async function route(thesis: Thesis): Promise<RouteEvidence | null> {
     }
   }
 
+  // Inject BTC as default for macro/market sentiment theses without specific crypto asset
+  const macroKeywords = ["risk-off", "risk-on", "fed ", "rates", "macro", "tariff", "bearish", "bullish"];
+  const cryptoMentions = ["crypto", "bitcoin", "cryptocurrency"];
+  // Standard crypto assets (unambiguous - these names clearly refer to tokens)
+  const standardCryptoAssets = ["BTC", "ETH", "SOL", "ARB", "OP", "AVAX", "MATIC", "LINK", "UNI", "AAVE"];
+  // Meme tokens with ambiguous names (e.g., "Trump" could be political, "Doge" could be the meme)
+  const memeTokens = ["TRUMP", "DOGE", "PEPE", "WIF", "BONK"];
+  const memeTokenKeywords = ["memecoin", "meme coin", "token", "$trump", "$doge", "$pepe", "perp"];
+  const fullText = thesis.thesis_text.toLowerCase() + " " + (thesis.keywords || []).join(" ").toLowerCase();
+  const hasMacroKeyword = macroKeywords.some((k) => fullText.includes(k));
+  const hasCryptoMention = cryptoMentions.some((k) => fullText.includes(k));
+  // Check for unambiguous crypto assets
+  const hasStandardCryptoAsset = thesis.keywords?.some((k) => standardCryptoAssets.includes(k.toUpperCase()));
+  // Only consider meme tokens as crypto assets if there's explicit token context
+  const isMemeTokenTrade = memeTokenKeywords.some((k) => fullText.includes(k));
+  const hasMemeTokenWithContext = isMemeTokenTrade && thesis.keywords?.some((k) => memeTokens.includes(k.toUpperCase()));
+  const hasCryptoAsset = hasStandardCryptoAsset || hasMemeTokenWithContext;
+
+  // Inject BTC for macro + crypto mention without specific asset, or for macro alone
+  const shouldInjectBTC = (hasMacroKeyword || hasCryptoMention) && !hasCryptoAsset && !isMemeTokenTrade;
+  if (shouldInjectBTC && !seen.has("hyperliquid:BTC")) {
+    // Add BTC as default macro sentiment proxy
+    allMatches.unshift({
+      ticker: "BTC",
+      name: "Bitcoin Perpetual",
+      platform: "hyperliquid",
+      instrument_type: "perp",
+      relevance: "direct",
+      explanation: "BTC perpetual as proxy for overall crypto market sentiment",
+      liquidity: "high",
+    });
+    seen.add("hyperliquid:BTC");
+  }
+
   if (allMatches.length === 0) {
     console.error("No instruments found for thesis");
     return null;
   }
 
   // Evaluate candidates (pass thesis keywords for context-aware scoring)
-  const evaluated = allMatches.map((m) => evaluateCandidate(m, thesis.keywords));
+  const evaluated = allMatches.map((m) => evaluateCandidate(m, thesis.keywords, thesis.thesis_text));
   const selected = selectBestCandidate(evaluated);
 
   if (!selected) {
