@@ -1,5 +1,8 @@
+// In production, use relative URLs (proxied through Next.js rewrites)
+// In development, use localhost directly
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:3460";
+  process.env.NEXT_PUBLIC_API_BASE ??
+  (typeof window === "undefined" ? "http://localhost:3460" : "");
 
 export type Trade = {
   trade_id: string;
