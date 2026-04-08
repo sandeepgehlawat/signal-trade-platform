@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { NeoCard, NeoBadge } from "@/components/Neo";
-import { feedApi, api, type NewsItem, type MockTrade, type Trade } from "@/lib/api";
+import { api, type Trade } from "@/lib/api";
 import { NewSignalForm } from "./NewSignalForm";
 
 function timeAgo(dateStr: string) {
@@ -221,45 +221,12 @@ export default function FeedsPage() {
     setError(null);
 
     try {
-      // Fetch all data in parallel
-      const [news, mockTrades, realTrades] = await Promise.all([
-        feedApi.news(50).catch(() => []),
-        feedApi.mockTrades(50).catch(() => []),
-        api.trades().catch(() => []),
-      ]);
+      // Fetch real trades only - no mock/demo data
+      const realTrades = await api.trades().catch(() => []);
 
       const items: FeedItem[] = [];
 
-      // Add mock trades
-      mockTrades.forEach((trade) => {
-        const relatedNews = news.find((n) => n.id === trade.news_id);
-        const reasoning = relatedNews?.summary
-          ? relatedNews.summary.split(/\.\s+/).filter(s => s.trim().length > 0).map(s => s.trim().replace(/\.$/, ''))
-          : undefined;
-
-        items.push({
-          id: trade.id,
-          type: "mock",
-          user_name: trade.user_name,
-          user_handle: trade.user_name.toLowerCase().replace(/\s/g, "_"),
-          ticker: trade.ticker.replace("-PERP", ""),
-          leverage: "5x",
-          headline: trade.news_headline || `${trade.direction.toUpperCase()} ${trade.ticker}`,
-          direction: trade.direction,
-          pnl_pct: trade.pnl_pct,
-          pnl_usd: trade.pnl_usd,
-          entry_price: trade.entry_price,
-          exit_price: trade.exit_price,
-          time_ago: timeAgo(trade.traded_at),
-          timestamp: trade.traded_at,
-          platform: trade.platform,
-          reasoning,
-          source_type: relatedNews?.source_type || "twitter",
-          status: trade.closed_at ? "closed" : "open",
-        });
-      });
-
-      // Add real trades
+      // Add real trades only
       realTrades.forEach((trade) => {
         // Calculate P&L percentage
         const entryPrice = trade.posted_price || trade.author_price || 0;

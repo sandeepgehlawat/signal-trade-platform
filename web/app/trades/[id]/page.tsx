@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { NeoCard, NeoStat, NeoBadge } from "@/components/Neo";
-import { CloseTradeButton } from "./CloseTradeButton";
 import { api, type Trade } from "@/lib/api";
 
 function fmt(n: unknown, d = 2) {
@@ -59,7 +58,7 @@ export default async function TradeDetailPage({
             {trade.author && ` · ${trade.author}`}
           </p>
         </div>
-        {trade.status === "open" && <CloseTradeButton tradeId={trade.trade_id} />}
+        {/* Close trade available via API only (auth required) */}
       </header>
 
       <section className="grid grid-cols-2 md:grid-cols-4 gap-5">
