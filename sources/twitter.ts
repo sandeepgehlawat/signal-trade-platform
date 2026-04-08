@@ -7,6 +7,7 @@
 
 import { TWITTER_SOURCES, POLLING_CONFIG } from "./config";
 import { isContentProcessed, saveContent, updateSourceLastCheck, getLastCheck, generateContentId } from "./storage";
+import { saveNews } from "../shared/storage";
 
 // Nitter instances for RSS feeds (Twitter alternatives)
 const NITTER_INSTANCES = [
@@ -257,6 +258,23 @@ export async function checkTwitterSources(): Promise<Tweet[]> {
           publishedAt: tweet.publishedAt.toISOString(),
           processedAt: new Date().toISOString(),
         });
+
+        // Also save as news item for the news feed
+        try {
+          saveNews({
+            id: `news_twitter_${tweet.id}`,
+            headline: tweet.text.slice(0, 200),
+            summary: tweet.text,
+            source: account.name,
+            source_type: "twitter",
+            author: account.name,
+            author_handle: account.username,
+            url: tweet.url,
+            published_at: tweet.publishedAt.toISOString(),
+          });
+        } catch (e) {
+          // Ignore duplicate news
+        }
 
         newTweets.push(tweet);
         console.log(`[twitter] New tweet from @${account.username}: ${tweet.text.slice(0, 50)}...`);

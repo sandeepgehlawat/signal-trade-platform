@@ -6,6 +6,7 @@
 
 import { RSS_SOURCES, POLLING_CONFIG, type RSSSource } from "./config";
 import { isContentProcessed, saveContent, updateSourceLastCheck, generateContentId } from "./storage";
+import { saveNews } from "../shared/storage";
 
 export interface RSSItem {
   id: string;
@@ -245,7 +246,7 @@ export async function checkRSSSources(): Promise<RSSItem[]> {
           continue;
         }
 
-        // Save to database
+        // Save to source_content database
         saveContent({
           id: generateContentId(),
           sourceType: "rss",
@@ -256,6 +257,21 @@ export async function checkRSSSources(): Promise<RSSItem[]> {
           publishedAt: item.publishedAt.toISOString(),
           processedAt: new Date().toISOString(),
         });
+
+        // Also save as news item for the news feed
+        try {
+          saveNews({
+            id: `news_${item.id}`,
+            headline: item.title,
+            summary: item.content?.slice(0, 500),
+            source: feed.name,
+            source_type: "news",
+            url: item.url,
+            published_at: item.publishedAt.toISOString(),
+          });
+        } catch (e) {
+          // Ignore duplicate news
+        }
 
         newItems.push(item);
         console.log(`[rss] New article from ${feed.name}: ${item.title.slice(0, 50)}...`);
