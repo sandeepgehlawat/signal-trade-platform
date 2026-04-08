@@ -106,7 +106,8 @@ async function publishSignalToFeed(trade: import("../types").TradePost): Promise
 import { computeAuthorPnl, computePostedPnl } from "../shared/pnl";
 import { execute as executeOrder, executeTradePost, getBalances } from "../shared/execute";
 
-const PORT = parseInt(process.env.PORT || "3460");
+// Use API_PORT to avoid conflict with Railway's PORT (used by Next.js)
+const PORT = parseInt(process.env.API_PORT || "3460");
 const FRONTEND_PATH = new URL("../frontend", import.meta.url).pathname;
 
 // ============================================================================
