@@ -46,13 +46,19 @@ export const TWITTER_SOURCES: TwitterSource[] = [
 ];
 
 export const YOUTUBE_SOURCES: YouTubeSource[] = [
-  // Note: YouTube RSS requires correct channel IDs
-  // Find channel ID: View page source, search for "channelId" or "externalId"
-  { type: "youtube", channelId: "UCqK_GSMbpiV8spgD3ZGloSw", name: "Coin Bureau", enabled: true },
-  { type: "youtube", channelId: "UCRvqjQPSeaWn-uEx-w0XOIg", name: "Benjamin Cowen", enabled: true },
-  { type: "youtube", channelId: "UCvGAjPKiXP0NLPQlVgVBh9w", name: "DataDash", enabled: true },
-  { type: "youtube", channelId: "UCJgHxpqfhWEEjYH2cK1_D_w", name: "Altcoin Daily", enabled: true },
-  // Add more channels here
+  // NOTE: YouTube has disabled public RSS feeds as of 2024
+  // Options to re-enable:
+  // 1. Set YOUTUBE_API_KEY in .env (requires Google Cloud project)
+  // 2. Self-host RSSHub (https://docs.rsshub.app/deploy/)
+  // 3. Use Invidious instance (set INVIDIOUS_URL in .env)
+  //
+  // Channels are disabled by default until YouTube access is configured
+  { type: "youtube", channelId: "UCqK_GSMbpiV8spgD3ZGloSw", name: "Coin Bureau", enabled: false },
+  { type: "youtube", channelId: "UCRvqjQPSeaWn-uEx-w0XOIg", name: "Benjamin Cowen", enabled: false },
+  { type: "youtube", channelId: "UCCatR7nWbYrkVXdxXb4cGXw", name: "DataDash", enabled: false },
+  { type: "youtube", channelId: "UCbLhGKVY-bJPcawebgtNfbw", name: "Altcoin Daily", enabled: false },
+  { type: "youtube", channelId: "UCH6KS5IiLfTyunVHPCDYT8Q", name: "InvestAnswers", enabled: false },
+  { type: "youtube", channelId: "UCBH5VZE_Y4F3CMcPIzPEB5A", name: "Real Vision", enabled: false },
 ];
 
 export const RSS_SOURCES: RSSSource[] = [

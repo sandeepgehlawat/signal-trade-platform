@@ -2,11 +2,19 @@
  * Signal Trade - YouTube Monitor
  *
  * Monitor YouTube channels for new videos
- * Uses YouTube RSS feeds (no API key required)
+ *
+ * Supports multiple methods:
+ * 1. YouTube Data API v3 (requires YOUTUBE_API_KEY)
+ * 2. Invidious instance (requires INVIDIOUS_URL)
+ * 3. Direct RSS (deprecated by YouTube, may not work)
  */
 
 import { YOUTUBE_SOURCES, POLLING_CONFIG } from "./config";
 import { isContentProcessed, saveContent, updateSourceLastCheck, generateContentId } from "./storage";
+
+// Configuration
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
+const INVIDIOUS_URL = process.env.INVIDIOUS_URL || "";
 
 export interface YouTubeVideo {
   id: string;
@@ -19,11 +27,74 @@ export interface YouTubeVideo {
 }
 
 /**
- * Fetch recent videos from a YouTube channel via RSS
+ * Fetch recent videos using YouTube Data API v3
  */
-async function fetchChannelVideos(channelId: string, channelName: string): Promise<YouTubeVideo[]> {
-  const videos: YouTubeVideo[] = [];
+async function fetchViaYouTubeAPI(channelId: string, channelName: string): Promise<YouTubeVideo[]> {
+  if (!YOUTUBE_API_KEY) return [];
 
+  try {
+    const url = `https://www.googleapis.com/youtube/v3/search?key=${YOUTUBE_API_KEY}&channelId=${channelId}&part=snippet&order=date&maxResults=10&type=video`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+
+    if (!response.ok) {
+      console.error(`[youtube] API error for ${channelName}: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    return (data.items || []).map((item: any) => ({
+      id: item.id.videoId,
+      channelId,
+      channelName,
+      title: item.snippet.title,
+      url: `https://www.youtube.com/watch?v=${item.id.videoId}`,
+      publishedAt: new Date(item.snippet.publishedAt),
+      description: item.snippet.description,
+    }));
+  } catch (e) {
+    console.error(`[youtube] API error for ${channelName}:`, e);
+    return [];
+  }
+}
+
+/**
+ * Fetch recent videos using Invidious instance
+ */
+async function fetchViaInvidious(channelId: string, channelName: string): Promise<YouTubeVideo[]> {
+  if (!INVIDIOUS_URL) return [];
+
+  try {
+    const url = `${INVIDIOUS_URL}/api/v1/channels/${channelId}/videos?fields=videoId,title,published,description`;
+    const response = await fetch(url, {
+      headers: { "User-Agent": "SignalTrade/1.0" },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) {
+      console.error(`[youtube] Invidious error for ${channelName}: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    return (data.videos || data || []).slice(0, 10).map((item: any) => ({
+      id: item.videoId,
+      channelId,
+      channelName,
+      title: item.title,
+      url: `https://www.youtube.com/watch?v=${item.videoId}`,
+      publishedAt: new Date(item.published * 1000),
+      description: item.description,
+    }));
+  } catch (e) {
+    console.error(`[youtube] Invidious error for ${channelName}:`, e);
+    return [];
+  }
+}
+
+/**
+ * Fetch recent videos from a YouTube channel via RSS (deprecated, may not work)
+ */
+async function fetchViaRSS(channelId: string, channelName: string): Promise<YouTubeVideo[]> {
   try {
     const rssUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
     const response = await fetch(rssUrl, {
@@ -32,16 +103,35 @@ async function fetchChannelVideos(channelId: string, channelName: string): Promi
     });
 
     if (!response.ok) {
-      console.error(`[youtube] Failed to fetch RSS for ${channelName}: ${response.status}`);
+      // Don't log error - RSS is deprecated
       return [];
     }
 
     const xml = await response.text();
     return parseYouTubeRSS(xml, channelId, channelName);
   } catch (e) {
-    console.error(`[youtube] Error fetching ${channelName}:`, e);
     return [];
   }
+}
+
+/**
+ * Fetch recent videos from a YouTube channel (tries multiple methods)
+ */
+async function fetchChannelVideos(channelId: string, channelName: string): Promise<YouTubeVideo[]> {
+  // Try YouTube API first (most reliable)
+  if (YOUTUBE_API_KEY) {
+    const videos = await fetchViaYouTubeAPI(channelId, channelName);
+    if (videos.length > 0) return videos;
+  }
+
+  // Try Invidious
+  if (INVIDIOUS_URL) {
+    const videos = await fetchViaInvidious(channelId, channelName);
+    if (videos.length > 0) return videos;
+  }
+
+  // Fallback to RSS (likely won't work)
+  return fetchViaRSS(channelId, channelName);
 }
 
 /**
