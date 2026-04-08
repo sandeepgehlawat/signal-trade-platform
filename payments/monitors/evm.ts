@@ -79,16 +79,20 @@ async function fetchTransferLogs(
       body: JSON.stringify(body),
     });
 
-    const result = await response.json();
+    if (!response.ok) {
+      return [];
+    }
+
+    const text = await response.text();
+    const result = JSON.parse(text);
 
     if (result.error) {
-      console.error(`[monitor:${chain}] RPC error:`, result.error);
       return [];
     }
 
     return result.result || [];
-  } catch (error) {
-    console.error(`[monitor:${chain}] Fetch error:`, error);
+  } catch {
+    // Silently ignore errors (rate limits, network issues)
     return [];
   }
 }

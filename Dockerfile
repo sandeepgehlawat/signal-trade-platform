@@ -31,7 +31,7 @@ FROM oven/bun:1.1-alpine
 WORKDIR /app
 
 # Install runtime dependencies
-RUN apk add --no-cache python3 make g++ nodejs npm
+RUN apk add --no-cache python3 make g++ curl nodejs npm
 
 # Copy everything from build stage
 COPY --from=base /app /app
