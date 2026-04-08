@@ -62,6 +62,13 @@ import {
   getAvailableChains,
   type SupportedChain,
 } from "../payments/monitor";
+import {
+  startMonitoring as startSourceMonitoring,
+  runOnce as runSourceCheck,
+  getAllSources,
+  getRecentContent,
+  POLLING_CONFIG,
+} from "../sources";
 
 // Publish signal to feed server via HTTP
 const FEED_SERVER_URL = process.env.FEED_SERVER_URL || "http://localhost:3462";
@@ -1229,6 +1236,68 @@ async function handleRequest(req: Request): Promise<Response> {
     return jsonResponse(status);
   }
 
+  // ============================================================================
+  // SOURCE MONITORING ENDPOINTS
+  // ============================================================================
+
+  // Get source monitoring status
+  if (method === "GET" && path === "/sources/status") {
+    const sources = getAllSources();
+    const recentContent = getRecentContent(20);
+
+    return jsonResponse({
+      status: "active",
+      sources: {
+        total: sources.length,
+        twitter: sources.filter(s => s.type === "twitter").length,
+        youtube: sources.filter(s => s.type === "youtube").length,
+        rss: sources.filter(s => s.type === "rss").length,
+      },
+      polling: {
+        twitter: `${POLLING_CONFIG.intervals.twitter / 60000} min`,
+        youtube: `${POLLING_CONFIG.intervals.youtube / 60000} min`,
+        rss: `${POLLING_CONFIG.intervals.rss / 60000} min`,
+      },
+      recentContent: recentContent.map(c => ({
+        type: c.sourceType,
+        source: c.sourceName,
+        url: c.contentUrl,
+        text: c.contentText?.slice(0, 100),
+        processedAt: c.processedAt,
+        signalGenerated: c.signalGenerated,
+      })),
+    });
+  }
+
+  // List all configured sources
+  if (method === "GET" && path === "/sources") {
+    const sources = getAllSources();
+    return jsonResponse({
+      sources: sources.map(s => ({
+        type: s.type,
+        name: s.name,
+        enabled: s.enabled,
+        ...(s.type === "twitter" ? { username: s.username } : {}),
+        ...(s.type === "youtube" ? { channelId: s.channelId } : {}),
+        ...(s.type === "rss" ? { url: s.url } : {}),
+      })),
+    });
+  }
+
+  // Trigger manual source check
+  if (method === "POST" && path === "/sources/check") {
+    // Run in background, don't block
+    runSourceCheck().catch(e => console.error("[sources] Check error:", e));
+    return jsonResponse({ message: "Source check started" });
+  }
+
+  // Get recent discovered content
+  if (method === "GET" && path === "/sources/content") {
+    const limit = parseInt(url.searchParams.get("limit") || "50");
+    const content = getRecentContent(Math.min(limit, 100));
+    return jsonResponse({ content });
+  }
+
   // Serve frontend
   if (method === "GET" && (path === "/" || path === "/index.html")) {
     const file = Bun.file(`${FRONTEND_PATH}/index.html`);
@@ -1300,6 +1369,12 @@ Payments (USDC):
   GET  /payments/status/:id   - Check payment status
   GET  /payments/user/:id     - User's payment history
 
+Source Monitoring (Auto):
+  GET  /sources              - List configured sources
+  GET  /sources/status       - Monitoring status + recent content
+  POST /sources/check        - Trigger manual source check
+  GET  /sources/content      - Recent discovered content
+
 ${PAPER_MODE ? "Set PAPER_MODE=false in .env for live trading" : "WARNING: Live trading enabled!"}
 `);
 
@@ -1311,3 +1386,6 @@ Bun.serve({
 
 // Start payment monitors (USDC on Polygon, X Layer, Solana)
 startPaymentMonitors();
+
+// Start source monitors (Twitter, YouTube, RSS)
+startSourceMonitoring();

@@ -46,10 +46,11 @@ export const PAYMENT_CONFIG = {
   },
 
   // Company deposit wallets (set in .env)
+  // DEV ONLY: Using test addresses when not configured - replace in production!
   depositWallets: {
-    polygon: process.env.DEPOSIT_WALLET_POLYGON || "",
-    xlayer: process.env.DEPOSIT_WALLET_XLAYER || "",
-    solana: process.env.DEPOSIT_WALLET_SOLANA || "",
+    polygon: process.env.DEPOSIT_WALLET_POLYGON || (process.env.NODE_ENV !== "production" ? "0x742d35Cc6634C0532925a3b844Bc9e7595f5bC11" : ""),
+    xlayer: process.env.DEPOSIT_WALLET_XLAYER || (process.env.NODE_ENV !== "production" ? "0x742d35Cc6634C0532925a3b844Bc9e7595f5bC11" : ""),
+    solana: process.env.DEPOSIT_WALLET_SOLANA || (process.env.NODE_ENV !== "production" ? "DRpbCBMxVnDK7maPMpE8mwqbRGgE3vZxMSKzGjkQrpAJ" : ""),
   },
 
   // Payment detection settings
