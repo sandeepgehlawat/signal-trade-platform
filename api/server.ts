@@ -38,6 +38,9 @@ import {
   saveSubscription,
   getActiveSubscription,
   cancelSubscription,
+  getRecentNews,
+  getRecentMockTrades,
+  seedMockData,
 } from "../shared/storage";
 import {
   createApiKey,
@@ -45,6 +48,15 @@ import {
   revokeApiKey,
   maskKey,
 } from "../feed/keys";
+import {
+  getGoogleAuthUrl,
+  handleGoogleCallback,
+  validateSession,
+  logout,
+  migrateUserData,
+  isGoogleAuthConfigured,
+  type SessionUser,
+} from "../shared/auth";
 import { resolve, normalize, join } from "path";
 import { timingSafeEqual } from "crypto";
 import {
@@ -862,30 +874,157 @@ async function handleGetBalances(req: Request): Promise<Response> {
 }
 
 // ============================================================================
+// AUTH ENDPOINTS
+// ============================================================================
+
+const SESSION_COOKIE_NAME = "st_session";
+
+function getSessionFromRequest(req: Request): SessionUser | null {
+  // Try cookie first
+  const cookieHeader = req.headers.get("Cookie");
+  if (cookieHeader) {
+    const cookies = Object.fromEntries(
+      cookieHeader.split(";").map((c) => {
+        const [key, ...v] = c.trim().split("=");
+        return [key, v.join("=")];
+      })
+    );
+    if (cookies[SESSION_COOKIE_NAME]) {
+      return validateSession(cookies[SESSION_COOKIE_NAME]);
+    }
+  }
+
+  // Try Authorization header
+  const authHeader = req.headers.get("Authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    return validateSession(token);
+  }
+
+  return null;
+}
+
+function sessionRequired(req: Request): { user: SessionUser } | { error: Response } {
+  const user = getSessionFromRequest(req);
+  if (!user) {
+    const origin = getCorsOrigin(req);
+    return {
+      error: new Response(JSON.stringify({ error: "Not authenticated" }), {
+        status: 401,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": origin,
+          "Access-Control-Allow-Credentials": "true",
+        },
+      }),
+    };
+  }
+  return { user };
+}
+
+async function handleAuthGoogle(req: Request): Promise<Response> {
+  if (!isGoogleAuthConfigured()) {
+    return jsonResponse({
+      error: "Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env"
+    }, 500);
+  }
+
+  const url = getGoogleAuthUrl();
+  return jsonResponse({ url });
+}
+
+async function handleAuthGoogleCallback(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const code = url.searchParams.get("code");
+  const error = url.searchParams.get("error");
+
+  // Frontend redirect URL
+  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+
+  if (error) {
+    return Response.redirect(`${frontendUrl}/keys?error=${encodeURIComponent(error)}`);
+  }
+
+  if (!code) {
+    return Response.redirect(`${frontendUrl}/keys?error=no_code`);
+  }
+
+  const result = await handleGoogleCallback(code);
+
+  if (!result.success) {
+    return Response.redirect(`${frontendUrl}/keys?error=${encodeURIComponent(result.error || "auth_failed")}`);
+  }
+
+  // Set session cookie and redirect to frontend
+  const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      "Location": `${frontendUrl}/keys`,
+      "Set-Cookie": `${SESSION_COOKIE_NAME}=${result.sessionToken}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires.toUTCString()}`,
+    },
+  });
+}
+
+async function handleAuthMe(req: Request): Promise<Response> {
+  const session = sessionRequired(req);
+  if ("error" in session) return session.error;
+
+  return jsonResponse({
+    user: {
+      id: session.user.userId,
+      email: session.user.email,
+    },
+  });
+}
+
+async function handleAuthLogout(req: Request): Promise<Response> {
+  const user = getSessionFromRequest(req);
+
+  // Try to get token from cookie
+  const cookieHeader = req.headers.get("Cookie");
+  if (cookieHeader) {
+    const cookies = Object.fromEntries(
+      cookieHeader.split(";").map((c) => {
+        const [key, ...v] = c.trim().split("=");
+        return [key, v.join("=")];
+      })
+    );
+    if (cookies[SESSION_COOKIE_NAME]) {
+      logout(cookies[SESSION_COOKIE_NAME]);
+    }
+  }
+
+  // Clear the cookie
+  const origin = getCorsOrigin(req);
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Set-Cookie": `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
+    },
+  });
+}
+
+// ============================================================================
 // API KEY ENDPOINTS
 // ============================================================================
 
 async function handleCreateApiKey(req: Request): Promise<Response> {
-  // Require auth for key creation
-  const authError = authRequired(req);
-  if (authError) return authError;
+  // Require session auth for key creation
+  const session = sessionRequired(req);
+  if ("error" in session) return session.error;
 
   try {
     const body = await req.json();
 
-    // Generate default user_id if not provided
-    const rawBody = {
-      user_id: body.user_id || `user_${Date.now()}`,
-      tier: body.tier,
-    };
+    // Use authenticated user's ID
+    const userId = session.user.userId;
+    const tier = body.tier || "free";
 
-    // Validate input
-    const validation = validateInput(createKeySchema, rawBody);
-    if (!validation.success) {
-      return jsonResponse({ error: validation.error }, 400);
-    }
-
-    const { user_id: userId, tier } = validation.data;
     const result = createApiKey(userId, tier);
 
     return jsonResponse({
@@ -906,9 +1045,14 @@ async function handleCreateApiKey(req: Request): Promise<Response> {
 }
 
 async function handleListApiKeys(userId: string, req: Request): Promise<Response> {
-  // Require auth
-  const authError = authRequired(req);
-  if (authError) return authError;
+  // Require session auth
+  const session = sessionRequired(req);
+  if ("error" in session) return session.error;
+
+  // Users can only list their own keys
+  if (session.user.userId !== userId) {
+    return jsonResponse({ error: "Forbidden" }, 403);
+  }
 
   const keys = listUserKeys(userId);
 
@@ -924,10 +1068,11 @@ async function handleListApiKeys(userId: string, req: Request): Promise<Response
 }
 
 async function handleRevokeApiKey(keyId: string, req: Request): Promise<Response> {
-  // Require auth
-  const authError = authRequired(req);
-  if (authError) return authError;
+  // Require session auth
+  const session = sessionRequired(req);
+  if ("error" in session) return session.error;
 
+  // TODO: Verify the key belongs to this user before revoking
   revokeApiKey(keyId);
 
   return jsonResponse({ success: true, key_id: keyId });
@@ -1053,6 +1198,65 @@ async function handleGetSignals(req: Request): Promise<Response> {
 }
 
 // ============================================================================
+// NEWS ENDPOINT
+// ============================================================================
+
+async function handleGetNews(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const limit = parseInt(url.searchParams.get("limit") || "50");
+
+  const news = getRecentNews(Math.min(limit, 100));
+
+  return jsonResponse({
+    news: news.map((n) => ({
+      id: n.id,
+      headline: n.headline,
+      summary: n.summary,
+      source: n.source,
+      source_type: n.source_type,
+      author: n.author,
+      author_handle: n.author_handle,
+      author_avatar: n.author_avatar,
+      url: n.url,
+      sentiment: n.sentiment,
+      assets: n.assets ? JSON.parse(n.assets) : [],
+      published_at: n.published_at,
+    })),
+  });
+}
+
+// ============================================================================
+// MOCK TRADES ENDPOINT
+// ============================================================================
+
+async function handleGetMockTrades(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const limit = parseInt(url.searchParams.get("limit") || "50");
+
+  const trades = getRecentMockTrades(Math.min(limit, 100));
+
+  return jsonResponse({
+    mock_trades: trades.map((t) => ({
+      id: t.id,
+      user_name: t.user_name,
+      user_avatar: t.user_avatar,
+      news_id: t.news_id,
+      news_headline: t.news_headline,
+      ticker: t.ticker,
+      direction: t.direction,
+      platform: t.platform,
+      entry_price: t.entry_price,
+      exit_price: t.exit_price,
+      pnl_usd: t.pnl_usd,
+      pnl_pct: t.pnl_pct,
+      position_size: t.position_size,
+      traded_at: t.traded_at,
+      closed_at: t.closed_at,
+    })),
+  });
+}
+
+// ============================================================================
 // ROUTER
 // ============================================================================
 
@@ -1073,7 +1277,7 @@ async function handleRequest(req: Request): Promise<Response> {
     return new Response(null, {
       headers: {
         "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
         "Access-Control-Allow-Credentials": "true",
         "Access-Control-Max-Age": "86400", // Cache preflight for 24 hours
@@ -1135,7 +1339,29 @@ async function handleRequest(req: Request): Promise<Response> {
     });
   }
 
-  // API Key routes
+  // ========== AUTH ROUTES ==========
+
+  // Get Google OAuth URL
+  if (method === "GET" && path === "/auth/google") {
+    return handleAuthGoogle(req);
+  }
+
+  // Google OAuth callback
+  if (method === "GET" && path === "/auth/google/callback") {
+    return handleAuthGoogleCallback(req);
+  }
+
+  // Get current user
+  if (method === "GET" && path === "/auth/me") {
+    return handleAuthMe(req);
+  }
+
+  // Logout
+  if (method === "POST" && path === "/auth/logout") {
+    return handleAuthLogout(req);
+  }
+
+  // API Key routes (now require session auth)
   if (method === "POST" && path === "/keys") {
     return handleCreateApiKey(req);
   }
@@ -1167,6 +1393,16 @@ async function handleRequest(req: Request): Promise<Response> {
   // Signals route
   if (method === "GET" && path === "/signals") {
     return handleGetSignals(req);
+  }
+
+  // News route
+  if (method === "GET" && path === "/news") {
+    return handleGetNews(req);
+  }
+
+  // Mock trades route
+  if (method === "GET" && path === "/mock-trades") {
+    return handleGetMockTrades(req);
   }
 
   // ========== PAYMENT ROUTES ==========
@@ -1383,6 +1619,9 @@ Bun.serve({
   fetch: handleRequest,
   idleTimeout: 120, // 2 minutes
 });
+
+// Seed mock data for demo (news and mock trades with attribution)
+seedMockData();
 
 // Start payment monitors (USDC on Polygon, X Layer, Solana)
 startPaymentMonitors();

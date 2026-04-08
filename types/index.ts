@@ -282,10 +282,51 @@ export interface Subscription {
   expires_at?: string;
 }
 
-export type FeedEventType = "signal" | "heartbeat" | "error" | "connected";
+export type FeedEventType = "signal" | "news" | "heartbeat" | "error" | "connected";
 
 export interface FeedEvent {
   type: FeedEventType;
-  data?: FeedSignal | Record<string, unknown>;
+  data?: FeedSignal | FeedNewsItem | Record<string, unknown>;
   timestamp: string;
+}
+
+// ============================================================================
+// NEWS FEED
+// ============================================================================
+
+export interface FeedNewsItem {
+  id: string;
+  headline: string;
+  summary?: string;
+  source: string;
+  source_type: "twitter" | "youtube" | "news" | "custom";
+  author?: string;
+  author_handle?: string;
+  author_avatar?: string;
+  url?: string;
+  sentiment?: "bullish" | "bearish" | "neutral";
+  assets?: string[]; // Mentioned assets like BTC, ETH
+  published_at: string;
+}
+
+// ============================================================================
+// MOCK TRADES WITH ATTRIBUTION
+// ============================================================================
+
+export interface MockTrade {
+  id: string;
+  user_name: string;
+  user_avatar?: string;
+  news_id: string;
+  news_headline: string;
+  ticker: string;
+  direction: Direction;
+  platform: Platform;
+  entry_price: number;
+  exit_price?: number;
+  pnl_usd: number;
+  pnl_pct: number;
+  position_size: number;
+  traded_at: string;
+  closed_at?: string;
 }

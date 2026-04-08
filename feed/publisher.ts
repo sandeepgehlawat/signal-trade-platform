@@ -1,12 +1,12 @@
 /**
- * Signal Trade - Signal Publisher
+ * Signal Trade - News Publisher
  *
- * Broadcasts signals to all connected feed subscribers
+ * Broadcasts news items to all connected feed subscribers
  * Handles tier-based delay (5 min for free tier)
  */
 
-import type { FeedSignal, FeedEvent, TradePost, Platform, ApiKeyTier } from "../types";
-import { saveSignal } from "../shared/storage";
+import type { FeedSignal, FeedEvent, FeedNewsItem, TradePost, Platform, ApiKeyTier } from "../types";
+import { saveSignal, saveNews } from "../shared/storage";
 import { RATE_LIMITS } from "./keys";
 
 // ============================================================================
@@ -233,3 +233,108 @@ function sendHeartbeat(): void {
 
 // Start heartbeat timer
 setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
+
+// ============================================================================
+// NEWS BROADCASTING
+// ============================================================================
+
+// Queue for delayed news (free tier)
+interface DelayedNews {
+  news: FeedNewsItem;
+  publishAt: number;
+}
+const delayedNewsQueue: DelayedNews[] = [];
+
+/**
+ * Publish a news item to all subscribers
+ * - Paid subscribers get it immediately
+ * - Free subscribers get it after 5 min delay
+ */
+export function publishNews(news: FeedNewsItem): void {
+  const now = Date.now();
+
+  // Save to database for history
+  saveNews({
+    id: news.id,
+    headline: news.headline,
+    summary: news.summary,
+    source: news.source,
+    source_type: news.source_type,
+    author: news.author,
+    author_handle: news.author_handle,
+    author_avatar: news.author_avatar,
+    url: news.url,
+    sentiment: news.sentiment,
+    assets: news.assets,
+    published_at: news.published_at,
+  });
+
+  // Broadcast to paid subscribers immediately
+  broadcastNewsToTier("paid", news);
+
+  // Queue for free subscribers (5 min delay)
+  const delayMs = RATE_LIMITS.free.delayMs;
+  if (delayMs > 0) {
+    const delayedNews: DelayedNews = {
+      news,
+      publishAt: now + delayMs,
+    };
+    delayedNewsQueue.push(delayedNews);
+    console.log(`[feed] News ${news.id} queued for free tier (delay: ${delayMs / 1000}s)`);
+  } else {
+    broadcastNewsToTier("free", news);
+  }
+
+  console.log(`[feed] Published news: ${news.headline.slice(0, 50)}...`);
+}
+
+/**
+ * Broadcast a news item to subscribers of a specific tier
+ */
+function broadcastNewsToTier(tier: ApiKeyTier, news: FeedNewsItem): void {
+  const event: FeedEvent = {
+    type: "news",
+    data: news,
+    timestamp: new Date().toISOString(),
+  };
+
+  for (const subscriber of subscribers.values()) {
+    if (subscriber.tier === tier) {
+      try {
+        subscriber.callback(event);
+      } catch (e) {
+        console.error(`[feed] Error sending news to subscriber ${subscriber.id}:`, e);
+      }
+    }
+  }
+}
+
+/**
+ * Process delayed news queue
+ */
+export function processDelayedNewsQueue(): void {
+  const now = Date.now();
+  const ready: DelayedNews[] = [];
+  const remaining: DelayedNews[] = [];
+
+  for (const item of delayedNewsQueue) {
+    if (item.publishAt <= now) {
+      ready.push(item);
+    } else {
+      remaining.push(item);
+    }
+  }
+
+  // Clear and refill queue with remaining items
+  delayedNewsQueue.length = 0;
+  delayedNewsQueue.push(...remaining);
+
+  // Broadcast ready news to free tier
+  for (const item of ready) {
+    console.log(`[feed] Releasing delayed news ${item.news.id} to free tier`);
+    broadcastNewsToTier("free", item.news);
+  }
+}
+
+// Start delayed news queue processor
+setInterval(processDelayedNewsQueue, 1000);

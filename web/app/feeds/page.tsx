@@ -1,77 +1,10 @@
+"use client";
+
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { NeoCard, NeoBadge } from "@/components/Neo";
-import { feedApi, type Signal } from "@/lib/api";
+import { feedApi, api, type NewsItem, type MockTrade, type Trade } from "@/lib/api";
 import { NewSignalForm } from "./NewSignalForm";
-
-// Live feed sources configuration
-const LIVE_SOURCES = [
-  {
-    id: "twitter",
-    name: "Twitter/X",
-    icon: "𝕏",
-    color: "text-foreground",
-    accounts: [
-      // Founders & Executives
-      "cz_binance", "saylor", "VitalikButerin", "brian_armstrong",
-      "APompliano", "novogratz", "BarrySilbert", "balajis",
-      "aantonop", "NickSzabo4", "naval", "chamath",
-      "jack", "cdixon", "pmarca", "tyler",
-      // Institutional & Analysts
-      "100trillionUSD", "woonomic", "WClementeIII", "dylanleclair_",
-      "PrestonPysh", "RaoulGMI", "Mark_Yusko", "CaitlinLong_",
-      "CryptoHayes", "adam3us", "ErikVoorhees", "TuurDemeester",
-      // Top Traders
-      "PeterLBrandt", "CryptoCapo_", "inversebrah", "HsakaTrades",
-      "CryptoCred", "EmperorBTC", "TheCryptoDog", "CryptoKaleo",
-      "Pentosh1", "SmartContracter", "loomdart", "AltcoinPsycho",
-      "GCRClassic", "CryptoMessiah", "blknoiz06", "Trader_XO",
-      // Projects & Official
-      "Bitcoin", "ethereum", "SolanaFndn", "Ripple",
-      "binance", "coinbase", "gemini", "BitMEXResearch"
-    ]
-  },
-  {
-    id: "youtube",
-    name: "YouTube",
-    icon: "▶",
-    color: "text-red-500",
-    accounts: [
-      "Coin Bureau", "Benjamin Cowen", "DataDash", "Altcoin Daily",
-      "InvestAnswers", "Lark Davis", "Anthony Pompliano", "Real Vision"
-    ]
-  },
-  {
-    id: "news",
-    name: "News",
-    icon: "◉",
-    color: "text-blue-500",
-    accounts: [
-      "CoinDesk", "The Block", "Decrypt", "CoinTelegraph", "Bitcoin Magazine",
-      "Blockworks", "DL News", "Unchained", "The Defiant", "Messari",
-      "Bloomberg Crypto", "Reuters Crypto", "WSJ Crypto", "Forbes Crypto"
-    ]
-  },
-  { id: "custom", name: "Custom", icon: "◈", color: "text-accent", accounts: ["User submitted"] },
-];
-
-async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
-  try {
-    return await p;
-  } catch {
-    return fallback;
-  }
-}
-
-function fmtNum(n: unknown, digits = 2) {
-  if (typeof n !== "number" || Number.isNaN(n)) return "—";
-  return n.toLocaleString(undefined, { maximumFractionDigits: digits });
-}
-
-function toneFor(direction?: string) {
-  if (direction === "long" || direction === "bullish") return "bull" as const;
-  if (direction === "short" || direction === "bearish") return "bear" as const;
-  return "neutral" as const;
-}
 
 function timeAgo(dateStr: string) {
   const date = new Date(dateStr);
@@ -79,190 +12,444 @@ function timeAgo(dateStr: string) {
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
 
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return date.toLocaleDateString();
+  if (diffMins < 1) return "now";
+  if (diffMins < 60) return `${diffMins}m`;
+  if (diffHours < 24) return `${diffHours}h`;
+  return `${diffDays}d`;
 }
 
-// Reputable signals have high confidence (>=70%)
-function isReputable(signal: Signal): boolean {
-  return signal.confidence >= 0.7;
+function fmtPct(n: number) {
+  const prefix = n >= 0 ? "+" : "";
+  return `${prefix}${n.toFixed(0)}%`;
 }
 
-// Determine source type from signal
-function getSourceType(signal: Signal): typeof LIVE_SOURCES[number] {
-  const platform = signal.platform?.toLowerCase() || "";
-  if (platform.includes("twitter") || platform.includes("x.com")) return LIVE_SOURCES[0];
-  if (platform.includes("youtube")) return LIVE_SOURCES[1];
-  if (platform.includes("coindesk") || platform.includes("block") || platform.includes("decrypt")) return LIVE_SOURCES[2];
-  return LIVE_SOURCES[3];
+function fmtPrice(n: number) {
+  if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`;
+  return `$${n.toFixed(2)}`;
 }
 
-export default async function FeedsPage() {
-  const allSignals = await safe<Signal[]>(feedApi.signals(50), []);
+// Combined feed item
+interface FeedItem {
+  id: string;
+  type: "mock" | "real";
+  avatar?: string;
+  user_name: string;
+  user_handle?: string;
+  ticker: string;
+  leverage?: string;
+  headline: string;
+  direction: "long" | "short" | string;
+  pnl_pct: number;
+  pnl_usd?: number;
+  entry_price: number;
+  exit_price?: number;
+  current_price?: number;
+  time_ago: string;
+  timestamp: string;
+  platform: string;
+  reasoning?: string[];
+  source_type?: string;
+  status?: string;
+  trade_id?: string;
+}
 
-  // Filter to only show reputable signals
-  const signals = allSignals.filter(isReputable);
+function FeedItemCard({ item, isExpanded, onToggle }: {
+  item: FeedItem;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const isPositive = item.pnl_pct >= 0;
+  const directionTone = item.direction === "long" ? "bull" : "bear";
+  const isOpen = item.status === "open";
 
   return (
-    <div className="mx-auto max-w-4xl px-4 sm:px-6 py-8 sm:py-10 flex flex-col gap-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">Signal Feed</h1>
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-          </span>
+    <div className={`neo-raised p-4 rounded-xl ${isOpen ? "border-l-2 border-green-500" : ""}`}>
+      {/* Main Row */}
+      <div
+        className="flex items-center gap-3 cursor-pointer"
+        onClick={onToggle}
+      >
+        {/* Avatar */}
+        <div className="w-10 h-10 rounded-full neo-pressed flex items-center justify-center text-sm font-bold flex-shrink-0 overflow-hidden">
+          {item.avatar ? (
+            <img src={item.avatar} alt="" className="w-full h-full object-cover" />
+          ) : (
+            item.user_name.slice(0, 2).toUpperCase()
+          )}
         </div>
-        <Link href="/" className="text-sm text-muted hover:text-foreground">
-          ← Back
-        </Link>
+
+        {/* Source Icon */}
+        {item.source_type === "twitter" && (
+          <span className="text-foreground text-sm flex-shrink-0">{"\uD835\uDD4F"}</span>
+        )}
+        {item.source_type === "youtube" && (
+          <span className="text-red-500 text-sm flex-shrink-0">{"\u25B6"}</span>
+        )}
+        {item.source_type === "news" && (
+          <span className="text-blue-500 text-sm flex-shrink-0">{"\u25C9"}</span>
+        )}
+
+        {/* Live Dot */}
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isOpen ? "bg-green-500 animate-pulse" : "bg-muted/50"}`}></span>
+
+        {/* Ticker + Leverage */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span className="font-bold">{item.ticker}</span>
+          {item.leverage && (
+            <span className="text-xs text-muted">{item.leverage}</span>
+          )}
+        </div>
+
+        {/* Headline */}
+        <p className="text-sm text-muted flex-1 truncate min-w-0">
+          {item.headline}
+        </p>
+
+        {/* Direction Badge */}
+        <NeoBadge tone={directionTone}>
+          {item.direction.toUpperCase()}
+        </NeoBadge>
+
+        {/* P&L */}
+        <span className={`font-semibold text-sm flex-shrink-0 min-w-[60px] text-right ${isPositive ? "text-bull" : "text-bear"}`}>
+          {fmtPct(item.pnl_pct)}
+        </span>
+
+        {/* Time */}
+        <span className="text-xs text-muted flex-shrink-0 w-8 text-right">
+          {item.time_ago}
+        </span>
       </div>
 
-      {/* Live Sources */}
-      <div className="neo-raised p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-            </span>
-            Live Sources
-          </h3>
-          <span className="text-xs text-muted">
-            {LIVE_SOURCES.reduce((acc, s) => acc + s.accounts.length, 0)} accounts monitored
-          </span>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {LIVE_SOURCES.map((source) => (
-            <div key={source.id} className="neo-pressed p-3 rounded-lg">
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center gap-2">
-                  <span className={`text-lg ${source.color}`}>{source.icon}</span>
-                  <span className="text-sm font-medium">{source.name}</span>
-                </div>
-                <span className="text-[10px] text-muted neo-raised-sm px-1.5 py-0.5 rounded">
-                  {source.accounts.length}
+      {/* Expanded Content */}
+      {isExpanded && (
+        <div className="mt-4 pt-4 border-t border-muted/20">
+          {/* Trade Details */}
+          <div className="flex items-center gap-4 mb-4 text-sm">
+            <div className="neo-pressed px-3 py-1.5 rounded-lg">
+              <span className="text-muted">Entry:</span>{" "}
+              <span className="font-medium">{fmtPrice(item.entry_price)}</span>
+            </div>
+            {item.exit_price && (
+              <div className="neo-pressed px-3 py-1.5 rounded-lg">
+                <span className="text-muted">Exit:</span>{" "}
+                <span className="font-medium">{fmtPrice(item.exit_price)}</span>
+              </div>
+            )}
+            {item.current_price && !item.exit_price && (
+              <div className="neo-pressed px-3 py-1.5 rounded-lg">
+                <span className="text-muted">Current:</span>{" "}
+                <span className="font-medium">{fmtPrice(item.current_price)}</span>
+              </div>
+            )}
+            {item.pnl_usd !== undefined && (
+              <div className={`neo-pressed px-3 py-1.5 rounded-lg ${item.pnl_usd >= 0 ? "text-bull" : "text-bear"}`}>
+                <span className="font-medium">
+                  {item.pnl_usd >= 0 ? "+" : ""}${Math.abs(item.pnl_usd).toLocaleString()}
                 </span>
               </div>
-              <div className="text-[10px] text-muted truncate">
-                {source.accounts.slice(0, 3).join(", ")}
-                {source.accounts.length > 3 && ` +${source.accounts.length - 3}`}
+            )}
+            <div className="neo-pressed px-3 py-1.5 rounded-lg">
+              <span className="text-xs text-muted">{item.platform}</span>
+            </div>
+            {isOpen && (
+              <div className="neo-raised-sm px-2 py-1 rounded text-[10px] text-green-500 font-medium">
+                LIVE
+              </div>
+            )}
+          </div>
+
+          {/* Reasoning Steps */}
+          {item.reasoning && item.reasoning.length > 0 && (
+            <div className="flex flex-col gap-2 mb-4">
+              {item.reasoning.map((step, i) => (
+                <div key={i} className="flex items-start gap-3">
+                  <span className="w-5 h-5 rounded-full bg-accent/20 text-accent flex items-center justify-center text-xs font-semibold flex-shrink-0">
+                    {i + 1}
+                  </span>
+                  <p className="text-sm text-foreground">{step}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted">
+              @{item.user_handle || item.user_name.toLowerCase().replace(/\s/g, "_")}
+            </span>
+            {item.trade_id ? (
+              <Link
+                href={`/trades/${item.trade_id}`}
+                className="neo-button px-3 py-1.5 text-sm font-medium"
+              >
+                see full trade &rarr;
+              </Link>
+            ) : (
+              <Link
+                href="/trades"
+                className="neo-button px-3 py-1.5 text-sm font-medium"
+              >
+                see full trade &rarr;
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const AUTO_REFRESH_INTERVAL = 30000; // 30 seconds
+
+export default function FeedsPage() {
+  const [filter, setFilter] = useState<"top" | "recent">("top");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const loadFeed = useCallback(async (isManualRefresh = false) => {
+    if (isManualRefresh) {
+      setIsRefreshing(true);
+    }
+    setError(null);
+
+    try {
+      // Fetch all data in parallel
+      const [news, mockTrades, realTrades] = await Promise.all([
+        feedApi.news(50).catch(() => []),
+        feedApi.mockTrades(50).catch(() => []),
+        api.trades().catch(() => []),
+      ]);
+
+      const items: FeedItem[] = [];
+
+      // Add mock trades
+      mockTrades.forEach((trade) => {
+        const relatedNews = news.find((n) => n.id === trade.news_id);
+        const reasoning = relatedNews?.summary
+          ? relatedNews.summary.split(/\.\s+/).filter(s => s.trim().length > 0).map(s => s.trim().replace(/\.$/, ''))
+          : undefined;
+
+        items.push({
+          id: trade.id,
+          type: "mock",
+          user_name: trade.user_name,
+          user_handle: trade.user_name.toLowerCase().replace(/\s/g, "_"),
+          ticker: trade.ticker.replace("-PERP", ""),
+          leverage: "5x",
+          headline: trade.news_headline || `${trade.direction.toUpperCase()} ${trade.ticker}`,
+          direction: trade.direction,
+          pnl_pct: trade.pnl_pct,
+          pnl_usd: trade.pnl_usd,
+          entry_price: trade.entry_price,
+          exit_price: trade.exit_price,
+          time_ago: timeAgo(trade.traded_at),
+          timestamp: trade.traded_at,
+          platform: trade.platform,
+          reasoning,
+          source_type: relatedNews?.source_type || "twitter",
+          status: trade.closed_at ? "closed" : "open",
+        });
+      });
+
+      // Add real trades
+      realTrades.forEach((trade) => {
+        // Calculate P&L percentage
+        const entryPrice = trade.posted_price || trade.author_price || 0;
+        const currentPrice = trade.current_price || entryPrice;
+        let pnlPct = 0;
+        if (entryPrice > 0) {
+          if (trade.direction === "long") {
+            pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+          } else {
+            pnlPct = ((entryPrice - currentPrice) / entryPrice) * 100;
+          }
+        }
+
+        items.push({
+          id: `real_${trade.trade_id}`,
+          type: "real",
+          trade_id: trade.trade_id,
+          user_name: trade.author || "Signal Trade",
+          user_handle: trade.author_handle,
+          ticker: trade.ticker.replace("-PERP", ""),
+          leverage: "1x",
+          headline: trade.headline_quote || `${trade.direction.toUpperCase()} ${trade.ticker}`,
+          direction: trade.direction,
+          pnl_pct: pnlPct,
+          pnl_usd: trade.author_pnl,
+          entry_price: entryPrice,
+          current_price: currentPrice,
+          time_ago: timeAgo(trade.opened_at || new Date().toISOString()),
+          timestamp: trade.opened_at || new Date().toISOString(),
+          platform: trade.platform,
+          reasoning: trade.headline_quote ? [trade.headline_quote] : undefined,
+          source_type: "news",
+          status: trade.status,
+        });
+      });
+
+      // Sort based on filter
+      if (filter === "top") {
+        items.sort((a, b) => Math.abs(b.pnl_pct) - Math.abs(a.pnl_pct));
+      } else {
+        items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      }
+
+      setFeedItems(items);
+      setLastUpdated(new Date());
+    } catch (e) {
+      console.error("Failed to load feed:", e);
+      setError("Failed to load feed. Will retry...");
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [filter]);
+
+  // Initial load and filter change
+  useEffect(() => {
+    setLoading(true);
+    loadFeed();
+  }, [filter, loadFeed]);
+
+  // Auto-refresh
+  useEffect(() => {
+    refreshTimerRef.current = setInterval(() => {
+      loadFeed();
+    }, AUTO_REFRESH_INTERVAL);
+
+    return () => {
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+      }
+    };
+  }, [loadFeed]);
+
+  const handleManualRefresh = () => {
+    loadFeed(true);
+  };
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-8 sm:py-10 flex flex-col gap-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <Link href="/" className="text-sm text-muted hover:text-foreground">
+          &larr; Back
+        </Link>
+        <div className="flex items-center gap-4">
+          {lastUpdated && (
+            <span className="text-xs text-muted">
+              Updated {timeAgo(lastUpdated.toISOString())}
+            </span>
+          )}
+          <NewSignalForm />
+        </div>
+      </div>
+
+      {/* Filter Tabs */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setFilter("top")}
+            className={`flex items-center gap-2 text-sm font-medium transition-colors ${
+              filter === "top" ? "text-foreground" : "text-muted hover:text-foreground"
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full transition-colors ${filter === "top" ? "bg-green-500" : "bg-muted/30"}`}></span>
+            top
+          </button>
+          <button
+            onClick={() => setFilter("recent")}
+            className={`text-sm font-medium transition-colors ${
+              filter === "recent" ? "text-foreground" : "text-muted hover:text-foreground"
+            }`}
+          >
+            recent
+          </button>
+        </div>
+        <button
+          onClick={handleManualRefresh}
+          disabled={isRefreshing}
+          className={`text-muted hover:text-foreground transition-all ${isRefreshing ? "animate-spin" : ""}`}
+          title="Refresh"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Error Banner */}
+      {error && (
+        <div className="neo-raised p-3 text-sm text-amber-500 flex items-center gap-2">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          {error}
+        </div>
+      )}
+
+      {/* Feed */}
+      {loading ? (
+        <div className="flex flex-col gap-3">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="neo-raised p-4 rounded-xl animate-pulse">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-muted/20"></div>
+                <div className="w-8 h-4 bg-muted/20 rounded"></div>
+                <div className="flex-1 h-4 bg-muted/20 rounded"></div>
+                <div className="w-16 h-6 bg-muted/20 rounded-full"></div>
+                <div className="w-12 h-4 bg-muted/20 rounded"></div>
               </div>
             </div>
           ))}
         </div>
-      </div>
-
-      {/* New Signal Form */}
-      <NewSignalForm />
-
-      {/* Subscription Banner */}
-      <div className="neo-raised p-4 flex items-center justify-between text-sm">
-        <div className="flex items-center gap-4">
-          <span className="text-muted">Subscription:</span>
-          <span className="neo-raised-sm px-2 py-1 text-xs font-semibold">FREE</span>
-          <span className="text-xs text-muted">5 min delay</span>
-        </div>
-        <Link href="/pricing" className="text-accent hover:underline text-sm">
-          Upgrade for real-time →
-        </Link>
-      </div>
-
-      {/* Reputable Signals Section */}
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold">Verified Signals</h2>
-            <span className="neo-raised-sm px-2 py-0.5 text-[10px] font-medium text-green-500 flex items-center gap-1">
-              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+      ) : feedItems.length === 0 ? (
+        <NeoCard className="text-center text-muted py-12">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-12 h-12 rounded-full neo-pressed flex items-center justify-center">
+              <svg className="w-6 h-6 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
-              HIGH CONFIDENCE
-            </span>
-          </div>
-          <span className="text-xs text-muted">{signals.length} signals</span>
-        </div>
-
-        {signals.length === 0 ? (
-          <NeoCard className="text-center text-muted py-12">
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-12 h-12 rounded-full neo-pressed flex items-center justify-center">
-                <svg className="w-6 h-6 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <div>
-                <p className="font-medium text-foreground">No verified signals yet</p>
-                <p className="text-sm">High-confidence signals (70%+) will appear here.</p>
-                <p className="text-sm mt-2">Submit your own using the form above!</p>
-              </div>
             </div>
-          </NeoCard>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {signals.map((signal) => {
-              const source = getSourceType(signal);
-              return (
-              <NeoCard key={signal.id} className="p-4">
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      {/* Source Icon */}
-                      <span className={`text-lg ${source.color}`} title={source.name}>{source.icon}</span>
-                      <span className="text-xl font-semibold">{signal.ticker}</span>
-                      <NeoBadge tone={toneFor(signal.direction)}>
-                        {signal.direction.toUpperCase()}
-                      </NeoBadge>
-                      <span className="neo-raised-sm px-2 py-0.5 text-[10px] font-medium text-muted">
-                        {signal.platform}
-                      </span>
-                      {/* Verified Badge */}
-                      <span className="flex items-center gap-1 text-green-500">
-                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 text-sm text-muted">
-                      <span>{timeAgo(signal.published_at)}</span>
-                    </div>
-                  </div>
-
-                  {signal.headline_quote && (
-                    <p className="text-sm text-muted">"{signal.headline_quote}"</p>
-                  )}
-
-                  <div className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-4">
-                      <span>
-                        Entry: <span className="font-semibold text-foreground">${fmtNum(signal.entry_price)}</span>
-                      </span>
-                      <span>
-                        Confidence: <span className="font-semibold text-green-500">{Math.round(signal.confidence * 100)}%</span>
-                      </span>
-                    </div>
-                    {signal.execution_priority && (
-                      <div className="flex items-center gap-1 text-xs text-muted">
-                        Execute:
-                        {signal.execution_priority.map((p, i) => (
-                          <span key={p} className="neo-pressed px-1.5 py-0.5 rounded text-[10px]">
-                            {i + 1}. {p}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </NeoCard>
-            );
-            })}
+            <div>
+              <p className="font-medium text-foreground">No trades yet</p>
+              <p className="text-sm">Trades will appear here in real-time.</p>
+              <p className="text-xs mt-2">Auto-refreshing every 30 seconds...</p>
+            </div>
           </div>
-        )}
-      </div>
+        </NeoCard>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {feedItems.map((item) => (
+            <FeedItemCard
+              key={item.id}
+              item={item}
+              isExpanded={expandedId === item.id}
+              onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Footer */}
+      {feedItems.length > 0 && (
+        <div className="flex items-center justify-between text-sm text-muted py-4">
+          <span>{feedItems.length} trades</span>
+          <span className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+            Auto-updating
+          </span>
+        </div>
+      )}
     </div>
   );
 }

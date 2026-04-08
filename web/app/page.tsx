@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { NeoCard, NeoStat, NeoButton, NeoBadge } from "@/components/Neo";
-import { api, feedApi, type Stats, type Trade, type Signal } from "@/lib/api";
+import { api, feedApi, type Stats, type Trade, type NewsItem, type MockTrade } from "@/lib/api";
 import { InstallSkillButton } from "./InstallSkillButton";
 
 async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
@@ -36,19 +36,46 @@ function toneFor(direction?: string) {
   return "neutral" as const;
 }
 
+function sentimentTone(sentiment?: string) {
+  if (sentiment === "bullish") return "bull" as const;
+  if (sentiment === "bearish") return "bear" as const;
+  return "neutral" as const;
+}
+
+function timeAgo(dateStr: string) {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return date.toLocaleDateString();
+}
+
+function fmtUsd(n: unknown) {
+  if (typeof n !== "number" || Number.isNaN(n)) return "\u2014";
+  const prefix = n >= 0 ? "+" : "";
+  return `${prefix}$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
 export default async function DashboardPage() {
-  const [stats, trades, signals] = await Promise.all([
+  const [stats, trades, news, mockTrades] = await Promise.all([
     safe<Stats>(api.stats(), {}),
     safe<Trade[]>(api.trades(), []),
-    safe<Signal[]>(feedApi.signals(10), []),
+    safe<NewsItem[]>(feedApi.news(10), []),
+    safe<MockTrade[]>(feedApi.mockTrades(10), []),
   ]);
 
   const recent = trades.slice(0, 6);
-  const recentSignals = signals.slice(0, 5);
+  const recentNews = news.slice(0, 5);
+  const recentMockTrades = mockTrades.slice(0, 5);
   const total = (stats.total as number) ?? trades.length;
   const open = (stats.open as number) ?? trades.filter((t) => t.status === "open").length;
   const closed = (stats.closed as number) ?? trades.filter((t) => t.status === "closed").length;
-  const totalPnl = (stats.total_pnl as number) ?? trades.reduce((s, t) => s + (t.author_pnl ?? 0), 0);
+  const totalPnl = mockTrades.reduce((s, t) => s + t.pnl_usd, 0);
 
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6 py-8 sm:py-10 flex flex-col gap-8 sm:gap-10">
@@ -97,60 +124,62 @@ export default async function DashboardPage() {
       </section>
 
       <section className="grid grid-cols-2 md:grid-cols-4 gap-5">
-        <NeoStat label="Total Trades" value={fmtNum(total, 0)} />
-        <NeoStat label="Open" value={fmtNum(open, 0)} />
-        <NeoStat label="Closed" value={fmtNum(closed, 0)} />
+        <NeoStat label="News Items" value={fmtNum(news.length, 0)} />
+        <NeoStat label="Community Trades" value={fmtNum(mockTrades.length, 0)} />
+        <NeoStat label="Open Positions" value={fmtNum(mockTrades.filter(t => !t.closed_at).length, 0)} />
         <NeoStat
-          label="Total P&L"
-          value={fmtNum(totalPnl)}
-          hint={
-            stats.win_rate != null
-              ? `Win rate ${fmtNum((stats.win_rate as number) * 100, 1)}%`
-              : undefined
-          }
+          label="Community P&L"
+          value={`$${fmtNum(totalPnl, 0)}`}
+          hint={mockTrades.length > 0 ? `${mockTrades.filter(t => t.pnl_usd > 0).length}/${mockTrades.length} profitable` : undefined}
         />
       </section>
 
-      {/* Live Signals Feed */}
+      {/* Live News Feed */}
       <section className="flex flex-col gap-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h2 className="text-xl font-semibold">Live Signals</h2>
+            <h2 className="text-xl font-semibold">Live News</h2>
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
             </span>
           </div>
           <Link href="/feeds" className="text-sm text-muted hover:text-foreground">
-            View all →
+            View all &rarr;
           </Link>
         </div>
 
-        {recentSignals.length === 0 ? (
+        {recentNews.length === 0 ? (
           <NeoCard className="text-center text-muted py-8">
-            No signals yet. Signals will appear here in real-time.
+            No news yet. Market-moving news will appear here in real-time.
           </NeoCard>
         ) : (
           <div className="flex flex-col gap-3">
-            {recentSignals.map((s) => (
-              <NeoCard key={s.id} className="flex items-center justify-between p-4">
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg font-semibold">{s.ticker}</span>
-                    <NeoBadge tone={toneFor(s.direction)}>{s.direction}</NeoBadge>
+            {recentNews.map((n) => (
+              <NeoCard key={n.id} className="p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-medium leading-snug line-clamp-2">
+                      {n.headline}
+                    </h3>
+                    <div className="flex items-center gap-2 mt-2 text-xs text-muted">
+                      <span>{n.source}</span>
+                      {n.author_handle && <span>@{n.author_handle}</span>}
+                      <span>{timeAgo(n.published_at)}</span>
+                    </div>
                   </div>
-                  {s.headline_quote && (
-                    <span className="text-sm text-muted hidden sm:inline truncate max-w-xs">
-                      "{s.headline_quote}"
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-4 text-sm">
-                  <span className="text-muted">${fmtNum(s.entry_price)}</span>
-                  <span className="text-xs text-muted">{s.platform}</span>
-                  <span className="text-xs text-muted">
-                    {new Date(s.published_at).toLocaleTimeString()}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {n.assets && n.assets.length > 0 && (
+                      <span className="neo-pressed px-1.5 py-0.5 rounded text-[10px]">
+                        {n.assets[0]}
+                      </span>
+                    )}
+                    {n.sentiment && (
+                      <NeoBadge tone={sentimentTone(n.sentiment)}>
+                        {n.sentiment.toUpperCase()}
+                      </NeoBadge>
+                    )}
+                  </div>
                 </div>
               </NeoCard>
             ))}
@@ -158,56 +187,65 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* Recent Trades */}
+      {/* Community Trades */}
       <section className="flex flex-col gap-5">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Recent trades</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-semibold">Community Trades</h2>
+            <span className="neo-raised-sm px-2 py-0.5 text-[10px] font-medium text-green-500">
+              LIVE
+            </span>
+          </div>
           <Link href="/trades" className="text-sm text-muted hover:text-foreground">
-            View all →
+            View all &rarr;
           </Link>
         </div>
 
-        {recent.length === 0 ? (
-          <NeoCard className="text-center text-muted">
-            No trades yet. Drop a tweet, video, or article into{" "}
-            <Link href="/process" className="underline">
-              New Signal
-            </Link>{" "}
-            to get started.
+        {recentMockTrades.length === 0 ? (
+          <NeoCard className="text-center text-muted py-8">
+            No community trades yet. Trades based on news will appear here.
           </NeoCard>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {recent.map((t) => (
-              <Link key={t.trade_id} href={`/trades/${t.trade_id}`} className="neo-card-link">
-                <NeoCard className="flex flex-col gap-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-lg font-semibold">{t.ticker}</span>
-                      <NeoBadge tone={toneFor(t.direction)}>{t.direction}</NeoBadge>
+          <div className="flex flex-col gap-3">
+            {recentMockTrades.map((mt) => (
+              <NeoCard key={mt.id} className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full neo-pressed flex items-center justify-center text-xs font-bold">
+                      {mt.user_name.slice(0, 2).toUpperCase()}
                     </div>
-                    <span className="text-xs text-muted">{t.platform}</span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{mt.user_name}</span>
+                        <span className="text-sm text-muted">{mt.ticker}</span>
+                        <NeoBadge tone={toneFor(mt.direction)}>
+                          {mt.direction.toUpperCase()}
+                        </NeoBadge>
+                      </div>
+                      {mt.news_headline && (
+                        <p className="text-xs text-muted line-clamp-1 mt-0.5 max-w-md">
+                          On: {mt.news_headline}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  {t.headline_quote && (
-                    <p className="text-sm text-muted line-clamp-2">"{t.headline_quote}"</p>
-                  )}
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted">Entry {fmtNum(t.posted_price)}</span>
+                  <div className="flex flex-col items-end">
                     <span
-                      className={
-                        (t.author_pnl ?? 0) >= 0
-                          ? "text-bull font-semibold"
-                          : "text-bear font-semibold"
-                      }
+                      className={`text-lg font-bold ${
+                        mt.pnl_usd >= 0 ? "text-bull" : "text-bear"
+                      }`}
                     >
-                      {fmtNum(t.author_pnl)}
+                      {fmtUsd(mt.pnl_usd)}
                     </span>
+                    <span className="text-xs text-muted">{timeAgo(mt.traded_at)}</span>
                   </div>
-                </NeoCard>
-              </Link>
+                </div>
+              </NeoCard>
             ))}
           </div>
         )}
       </section>
+
     </div>
   );
 }

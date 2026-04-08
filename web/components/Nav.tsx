@@ -8,6 +8,9 @@ const LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/feeds", label: "Feeds" },
   { href: "/trades", label: "Trades" },
+  { href: "/process", label: "New Signal" },
+  { href: "/keys", label: "API Keys" },
+  { href: "/pricing", label: "Pricing" },
 ];
 
 export function Nav() {
