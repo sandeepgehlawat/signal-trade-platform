@@ -107,7 +107,22 @@ import { computeAuthorPnl, computePostedPnl } from "../shared/pnl";
 import { execute as executeOrder, executeTradePost, getBalances } from "../shared/execute";
 
 // Use API_PORT to avoid conflict with Railway's PORT (used by Next.js)
-const PORT = parseInt(process.env.API_PORT || "3460");
+// NEVER use process.env.PORT - that's for Next.js external traffic
+const API_PORT_RAW = process.env.API_PORT || "3460";
+const PORT = parseInt(API_PORT_RAW);
+
+// Log port configuration immediately for debugging
+console.log(`[api] ===== PORT CONFIGURATION =====`);
+console.log(`[api] API_PORT env: ${process.env.API_PORT || "(not set)"}`);
+console.log(`[api] PORT env (Railway): ${process.env.PORT || "(not set)"}`);
+console.log(`[api] Using port: ${PORT}`);
+console.log(`[api] ==============================`);
+
+// Safety check: warn if we're accidentally trying to use Railway's port
+if (process.env.PORT && PORT === parseInt(process.env.PORT)) {
+  console.error(`[api] WARNING: API port ${PORT} matches Railway PORT! This will conflict with Next.js.`);
+}
+
 const FRONTEND_PATH = new URL("../frontend", import.meta.url).pathname;
 
 // ============================================================================
@@ -1535,33 +1550,19 @@ async function handleRequest(req: Request): Promise<Response> {
     return jsonResponse({ content });
   }
 
-  // Serve frontend
+  // Note: Frontend is now served by Next.js on Railway's PORT
+  // API server should NOT serve root path - if you see this, routing is wrong
   if (method === "GET" && (path === "/" || path === "/index.html")) {
-    const file = Bun.file(`${FRONTEND_PATH}/index.html`);
-    return new Response(file, {
-      headers: { "Content-Type": "text/html" },
-    });
+    console.error(`[api] WARNING: Root path request reached API server! This indicates routing misconfiguration.`);
+    return jsonResponse({
+      error: "API server received root request - routing misconfigured",
+      server: "api",
+      port: PORT,
+      hint: "Next.js should handle this request, not the API server"
+    }, 500);
   }
 
-  // Serve static files from frontend/
-  // Protected against path traversal attacks
-  if (method === "GET" && path.startsWith("/static/")) {
-    const requestedPath = path.slice(7); // Remove "/static"
-    const normalizedPath = normalize(requestedPath).replace(/^(\.\.[\/\\])+/, "");
-    const filePath = resolve(FRONTEND_PATH, normalizedPath);
-
-    // Ensure the resolved path is within FRONTEND_PATH
-    if (!filePath.startsWith(resolve(FRONTEND_PATH))) {
-      return jsonResponse({ error: "Forbidden" }, 403);
-    }
-
-    const file = Bun.file(filePath);
-    if (await file.exists()) {
-      return new Response(file);
-    }
-  }
-
-  return jsonResponse({ error: "Not found" }, 404);
+  return jsonResponse({ error: "Not found", server: "api", port: PORT }, 404);
 }
 
 // ============================================================================

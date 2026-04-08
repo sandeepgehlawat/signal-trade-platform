@@ -318,7 +318,7 @@ async function handleRequest(req: Request): Promise<Response> {
     }
   }
 
-  return jsonResponse({ error: "Not found" }, 404);
+  return jsonResponse({ error: "Not found", server: "feed", port: FEED_PORT }, 404);
 }
 
 // ============================================================================
