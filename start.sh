@@ -1,12 +1,16 @@
 #!/bin/sh
 
+# Save Railway's PORT for Next.js (default 3000 for local dev)
+RAILWAY_PORT=${PORT:-3000}
+echo "Railway PORT: $RAILWAY_PORT"
+
 # Start Feed server in background
 echo "Starting Feed server on port 3462..."
 FEED_PORT=3462 bun run feed/server.ts &
 
-# Start API server in background on internal port
+# Start API server in background on internal port 3460
 echo "Starting API server on port 3460..."
-PORT=3460 FEED_SERVER_URL=http://localhost:3462 bun run api/server.ts &
+API_PORT=3460 PORT=3460 FEED_SERVER_URL=http://localhost:3462 bun run api/server.ts &
 
 # Wait for API to be ready (up to 30 seconds)
 echo "Waiting for API to be ready..."
@@ -20,5 +24,5 @@ done
 
 # Start Next.js on Railway's PORT
 cd /app/web
-echo "Starting Next.js on port ${PORT:-3000}..."
-exec npm run start
+echo "Starting Next.js on port $RAILWAY_PORT..."
+PORT=$RAILWAY_PORT exec npm run start
