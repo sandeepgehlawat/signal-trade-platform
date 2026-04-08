@@ -146,10 +146,10 @@ export default async function TradesPage({
             </div>
             <div>
               <p className="font-medium text-foreground">No trades yet</p>
-              <p className="text-sm">Process a signal to create your first trade.</p>
+              <p className="text-sm">Trades from processed signals will appear here.</p>
             </div>
-            <Link href="/process" className="neo-button px-4 py-2 text-sm font-medium mt-2">
-              New Signal
+            <Link href="/feeds" className="neo-button px-4 py-2 text-sm font-medium mt-2">
+              View Live Feed
             </Link>
           </div>
         </NeoCard>
