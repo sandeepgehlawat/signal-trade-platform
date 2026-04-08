@@ -54,6 +54,15 @@ import {
   createSubscriptionSchema,
   closeTradeSchema,
 } from "../shared/validation";
+import {
+  startPaymentMonitors,
+  createPaymentRequest,
+  getPaymentDetails,
+  getUserPaymentStatus,
+  getAvailableChains,
+  type SupportedChain,
+} from "../payments/monitor";
+
 // Publish signal to feed server via HTTP
 const FEED_SERVER_URL = process.env.FEED_SERVER_URL || "http://localhost:3462";
 const FEED_INTERNAL_SECRET = process.env.FEED_INTERNAL_SECRET || "dev_secret_change_in_prod";
@@ -1153,6 +1162,73 @@ async function handleRequest(req: Request): Promise<Response> {
     return handleGetSignals(req);
   }
 
+  // ========== PAYMENT ROUTES ==========
+
+  // Get available payment chains
+  if (method === "GET" && path === "/payments/chains") {
+    return jsonResponse({ chains: getAvailableChains() });
+  }
+
+  // Create payment request
+  if (method === "POST" && path === "/payments/create") {
+    try {
+      const body = await req.json();
+      const { user_id, chain, period } = body;
+
+      if (!user_id) {
+        return jsonResponse({ error: "user_id is required" }, 400);
+      }
+
+      if (!chain || !["polygon", "xlayer", "solana"].includes(chain)) {
+        return jsonResponse({ error: "Invalid chain. Use: polygon, xlayer, or solana" }, 400);
+      }
+
+      const payment = createPaymentRequest(user_id, chain as SupportedChain, period || "weekly");
+
+      return jsonResponse({
+        success: true,
+        payment: {
+          id: payment.id,
+          chain: payment.chain,
+          amount: payment.amount,
+          amountUsdc: payment.amountUsdc,
+          depositAddress: payment.depositAddress,
+          memo: payment.memo,
+          expiresAt: payment.expiresAt,
+        },
+        instructions: [
+          `Send exactly $${payment.amountUsdc.toFixed(2)} USDC`,
+          `To: ${payment.depositAddress}`,
+          `Network: ${payment.chain === "xlayer" ? "X Layer" : payment.chain === "polygon" ? "Polygon" : "Solana"}`,
+          `Reference: ${payment.memo}`,
+          "",
+          "Payment will be detected automatically within 1-2 minutes.",
+        ],
+      });
+    } catch (e) {
+      return jsonResponse({ error: String(e) }, 500);
+    }
+  }
+
+  // Get payment status
+  if (method === "GET" && path.startsWith("/payments/status/")) {
+    const paymentId = path.slice(17);
+    const payment = getPaymentDetails(paymentId);
+
+    if (!payment) {
+      return jsonResponse({ error: "Payment not found" }, 404);
+    }
+
+    return jsonResponse({ payment });
+  }
+
+  // Get user's payment history and subscription
+  if (method === "GET" && path.startsWith("/payments/user/")) {
+    const userId = path.slice(15);
+    const status = getUserPaymentStatus(userId);
+    return jsonResponse(status);
+  }
+
   // Serve frontend
   if (method === "GET" && (path === "/" || path === "/index.html")) {
     const file = Bun.file(`${FRONTEND_PATH}/index.html`);
@@ -1218,6 +1294,12 @@ Feed System:
   POST /subscribe/cancel   - Cancel subscription
   GET  /signals            - List recent signals
 
+Payments (USDC):
+  GET  /payments/chains       - List available payment chains
+  POST /payments/create       - Create payment request
+  GET  /payments/status/:id   - Check payment status
+  GET  /payments/user/:id     - User's payment history
+
 ${PAPER_MODE ? "Set PAPER_MODE=false in .env for live trading" : "WARNING: Live trading enabled!"}
 `);
 
@@ -1226,3 +1308,6 @@ Bun.serve({
   fetch: handleRequest,
   idleTimeout: 120, // 2 minutes
 });
+
+// Start payment monitors (USDC on Polygon, X Layer, Solana)
+startPaymentMonitors();
