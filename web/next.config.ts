@@ -1,15 +1,16 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Proxy API calls to internal Bun server
+  // Proxy API calls to internal servers
   async rewrites() {
     const apiUrl = process.env.INTERNAL_API_URL || "http://localhost:3460";
+    const feedUrl = process.env.INTERNAL_FEED_URL || "http://localhost:3462";
     return [
       {
         source: "/api/:path*",
         destination: `${apiUrl}/:path*`,
       },
-      // Also proxy auth, trades, keys, etc directly
+      // Auth, trades, keys etc go to API server
       {
         source: "/auth/:path*",
         destination: `${apiUrl}/auth/:path*`,
@@ -43,12 +44,13 @@ const nextConfig: NextConfig = {
         destination: `${apiUrl}/signals/:path*`,
       },
       {
-        source: "/feed/:path*",
-        destination: `${apiUrl}/feed/:path*`,
-      },
-      {
         source: "/process",
         destination: `${apiUrl}/process`,
+      },
+      // Feed server (SSE streaming)
+      {
+        source: "/feed/:path*",
+        destination: `${feedUrl}/feed/:path*`,
       },
     ];
   },
