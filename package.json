@@ -6,12 +6,16 @@
     "dev": "bun run api/server.ts",
     "serve": "bun run api/server.ts",
     "feed": "bun run feed/server.ts",
-    "web": "cd web && npm run dev",
-    "start": "concurrently \"bun run serve\" \"bun run feed\" \"npm run web --prefix web\""
+    "web:dev": "cd web && bun run dev",
+    "web:start": "cd web && bun run start",
+    "build": "cd web && bun run build",
+    "start": "concurrently \"bun run serve\" \"bun run feed\" \"bun run web:dev\"",
+    "start:prod": "concurrently \"bun run serve\" \"bun run feed\" \"bun run web:start\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
     "@nktkas/hyperliquid": "^0.32.2",
+    "@polymarket/clob-client": "^4.3.1",
     "better-sqlite3": "^11.7.0",
     "viem": "^2.47.10",
     "zod": "^4.3.6"
