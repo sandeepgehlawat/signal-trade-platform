@@ -99,19 +99,34 @@ async function fetchTransferLogs(
 async function getBlockNumber(chain: "polygon" | "xlayer"): Promise<number> {
   const config = PAYMENT_CONFIG.chains[chain];
 
-  const response = await fetch(config.rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "eth_blockNumber",
-      params: [],
-    }),
-  });
+  try {
+    const response = await fetch(config.rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_blockNumber",
+        params: [],
+      }),
+    });
 
-  const result = await response.json();
-  return parseInt(result.result, 16);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+    const result = JSON.parse(text);
+
+    if (result.error) {
+      throw new Error(result.error.message || "RPC error");
+    }
+
+    return parseInt(result.result, 16);
+  } catch (error) {
+    // Return -1 to indicate failure, caller should handle
+    return -1;
+  }
 }
 
 /**
@@ -223,6 +238,11 @@ export async function pollChain(chain: "polygon" | "xlayer"): Promise<void> {
   try {
     const currentBlock = await getBlockNumber(chain);
 
+    // Skip if RPC failed (rate limited, etc)
+    if (currentBlock < 0) {
+      return;
+    }
+
     // Initialize last block if needed (start from current - 100)
     if (!lastBlock[chain]) {
       lastBlock[chain] = currentBlock - 100;
@@ -242,7 +262,7 @@ export async function pollChain(chain: "polygon" | "xlayer"): Promise<void> {
 
     lastBlock[chain] = currentBlock;
   } catch (error) {
-    console.error(`[monitor:${chain}] Poll error:`, error);
+    // Silently ignore poll errors (rate limits, network issues)
   }
 }
 
@@ -252,15 +272,15 @@ export async function pollChain(chain: "polygon" | "xlayer"): Promise<void> {
 export function startEvmMonitor(): void {
   console.log("[monitor:evm] Starting EVM chain monitors...");
 
-  // Poll Polygon every 5 seconds
+  // Poll Polygon every 30 seconds (to avoid rate limits on public RPC)
   if (PAYMENT_CONFIG.depositWallets.polygon) {
-    setInterval(() => pollChain("polygon"), 5000);
-    console.log("[monitor:evm] Polygon monitor started");
+    setInterval(() => pollChain("polygon"), 30000);
+    console.log("[monitor:evm] Polygon monitor started (30s interval)");
   }
 
-  // Poll X Layer every 5 seconds
+  // Poll X Layer every 30 seconds
   if (PAYMENT_CONFIG.depositWallets.xlayer) {
-    setInterval(() => pollChain("xlayer"), 5000);
-    console.log("[monitor:evm] X Layer monitor started");
+    setInterval(() => pollChain("xlayer"), 30000);
+    console.log("[monitor:evm] X Layer monitor started (30s interval)");
   }
 }

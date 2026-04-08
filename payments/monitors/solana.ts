@@ -61,7 +61,7 @@ async function getRecentSignatures(limit = 20): Promise<string[]> {
     const result = await response.json();
 
     if (result.error) {
-      console.error("[monitor:solana] RPC error:", result.error);
+      // Silently ignore rate limit errors
       return [];
     }
 
@@ -215,8 +215,8 @@ export async function pollSolana(): Promise<void> {
         entries.slice(0, 500).forEach((s) => processedSignatures.delete(s));
       }
     }
-  } catch (error) {
-    console.error("[monitor:solana] Poll error:", error);
+  } catch {
+    // Silently ignore poll errors (rate limits, network issues)
   }
 }
 
@@ -231,8 +231,8 @@ export function startSolanaMonitor(): void {
 
   console.log("[monitor:solana] Starting Solana monitor...");
 
-  // Poll every 3 seconds (Solana is fast)
-  setInterval(pollSolana, 3000);
+  // Poll every 30 seconds (to avoid rate limits on public RPC)
+  setInterval(pollSolana, 30000);
 
-  console.log("[monitor:solana] Solana monitor started");
+  console.log("[monitor:solana] Solana monitor started (30s interval)");
 }
