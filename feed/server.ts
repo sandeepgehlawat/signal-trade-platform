@@ -345,6 +345,7 @@ Usage:
 `);
 
 Bun.serve({
+  hostname: "127.0.0.1", // Bind to localhost only - not accessible externally
   port: FEED_PORT,
   fetch: handleRequest,
   idleTimeout: 255, // Max allowed by Bun

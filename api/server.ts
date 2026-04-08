@@ -1617,6 +1617,7 @@ ${PAPER_MODE ? "Set PAPER_MODE=false in .env for live trading" : "WARNING: Live 
 `);
 
 Bun.serve({
+  hostname: "127.0.0.1", // Bind to localhost only - not accessible externally
   port: PORT,
   fetch: handleRequest,
   idleTimeout: 120, // 2 minutes
