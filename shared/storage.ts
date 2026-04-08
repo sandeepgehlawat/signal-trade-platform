@@ -13,8 +13,12 @@ import { toPositivePrice } from "./pricing";
 // DATABASE INITIALIZATION
 // ============================================================================
 
-const DB_PATH = new URL("../signal-trade.db", import.meta.url).pathname;
+const DB_PATH = process.env.DB_PATH || new URL("../signal-trade.db", import.meta.url).pathname;
 const db = new Database(DB_PATH);
+
+// Enable WAL mode for better concurrent access (multiple processes)
+db.run("PRAGMA journal_mode = WAL");
+db.run("PRAGMA busy_timeout = 5000"); // Wait up to 5s if locked
 
 // ============================================================================
 // USERS & AUTH TABLES
