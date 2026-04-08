@@ -26,10 +26,22 @@ for i in $(seq 1 30); do
 done
 
 # Start Next.js on the external PORT
-# Export PORT explicitly for Next.js
+# Use standalone mode for Docker deployment
 cd /app/web
 export PORT=$NEXTJS_PORT
-echo "Starting Next.js on port $PORT (exported)..."
+export HOSTNAME="0.0.0.0"
+echo "Starting Next.js standalone on port $PORT..."
 echo "Current directory: $(pwd)"
-echo "Running: npm run start"
-exec npm run start
+
+# Check if standalone build exists
+if [ -d ".next/standalone" ]; then
+  echo "Using standalone server..."
+  # Copy static files to standalone (Next.js requirement)
+  cp -r .next/static .next/standalone/.next/ 2>/dev/null || true
+  cp -r public .next/standalone/ 2>/dev/null || true
+  cd .next/standalone
+  exec node server.js
+else
+  echo "Standalone build not found, using npm start..."
+  exec npm run start
+fi

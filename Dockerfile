@@ -21,9 +21,15 @@ RUN npm install
 WORKDIR /app
 COPY . .
 
-# Build Next.js
+# Build Next.js (standalone mode)
 WORKDIR /app/web
 RUN npm run build
+
+# Copy static assets into standalone build (required for standalone mode)
+RUN if [ -d ".next/standalone" ]; then \
+      cp -r .next/static .next/standalone/.next/ 2>/dev/null || true; \
+      cp -r public .next/standalone/ 2>/dev/null || true; \
+    fi
 
 # Production stage
 FROM oven/bun:1.1-alpine

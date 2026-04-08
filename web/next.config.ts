@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Enable standalone output for Docker deployment
+  output: "standalone",
+
   // Proxy API calls to internal servers
   async rewrites() {
     const apiUrl = process.env.INTERNAL_API_URL || "http://localhost:3460";
