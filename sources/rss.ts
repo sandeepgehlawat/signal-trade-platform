@@ -185,28 +185,82 @@ function decodeHTMLEntities(text: string): string {
 
 /**
  * Check if article is relevant for trading signals
+ *
+ * Philosophy: Collect BROADLY, let Claude decide what's tradeable.
+ * Market-moving news includes geopolitics, macro, regulatory, etc.
  */
 function isTradingRelevant(item: RSSItem): boolean {
   const text = (item.title + " " + (item.content || "")).toLowerCase();
 
-  // Trading-relevant keywords
-  const keywords = [
-    "bitcoin", "btc", "ethereum", "eth", "solana", "sol",
-    "crypto", "altcoin", "defi", "nft",
-    "price", "surge", "crash", "rally", "dump", "pump",
+  // ==========================================================================
+  // CRYPTO & TRADING KEYWORDS
+  // ==========================================================================
+  const cryptoKeywords = [
+    // Cryptos
+    "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "xrp", "bnb",
+    "crypto", "cryptocurrency", "altcoin", "defi", "nft", "web3",
+    "stablecoin", "usdt", "usdc", "tether",
+
+    // Trading
+    "price", "surge", "crash", "rally", "dump", "pump", "moon",
     "bull", "bear", "breakout", "support", "resistance",
-    "whale", "accumulation", "distribution",
-    "sec", "regulation", "etf", "adoption",
-    "market cap", "all-time high", "ath",
+    "whale", "accumulation", "distribution", "volume",
+    "market cap", "all-time high", "ath", "correction",
+
+    // DeFi/Protocol
+    "tvl", "liquidity", "yield", "staking", "airdrop",
+    "hack", "exploit", "breach", "security",
+    "upgrade", "fork", "halving", "merge",
   ];
 
-  // Exclude keywords
+  // ==========================================================================
+  // GEOPOLITICAL & MACRO KEYWORDS
+  // ==========================================================================
+  const geopoliticalKeywords = [
+    // Central banks & monetary policy
+    "fed", "federal reserve", "fomc", "rate cut", "rate hike", "interest rate",
+    "powell", "yellen", "ecb", "central bank",
+    "inflation", "cpi", "gdp", "employment", "jobs", "unemployment",
+    "recession", "stagflation", "economic",
+
+    // Geopolitics
+    "war", "conflict", "sanction", "tariff", "trade war",
+    "russia", "ukraine", "china", "taiwan", "iran", "israel",
+    "nato", "brics", "opec", "oil", "energy",
+    "election", "trump", "biden", "congress", "vote",
+    "geopolitical", "military",
+
+    // Regulatory
+    "sec", "cftc", "doj", "treasury", "gensler",
+    "regulation", "lawsuit", "court", "ruling", "settlement",
+    "ban", "approve", "etf", "spot etf", "bitcoin etf",
+    "legal", "compliance", "enforcement",
+
+    // Markets
+    "dollar", "dxy", "bond", "yield", "treasury",
+    "stock", "equity", "sp500", "nasdaq", "index",
+    "bank", "banking", "credit", "default", "bankruptcy",
+  ];
+
+  // ==========================================================================
+  // MARKET EVENTS
+  // ==========================================================================
+  const marketKeywords = [
+    "institutional", "blackrock", "fidelity", "grayscale", "microstrategy",
+    "adoption", "partnership", "acquisition", "merger", "listing",
+    "breaking", "announcement", "launch", "release",
+    "fear", "greed", "panic", "sentiment",
+  ];
+
+  const allKeywords = [...cryptoKeywords, ...geopoliticalKeywords, ...marketKeywords];
+
+  // Exclude spam/low-value content
   const excludeKeywords = [
     "sponsored", "advertisement", "partner content",
-    "podcast", "interview", "opinion",
+    "giveaway", "airdrop claim", "free tokens",
   ];
 
-  const hasRelevantKeyword = keywords.some(kw => text.includes(kw));
+  const hasRelevantKeyword = allKeywords.some(kw => text.includes(kw));
   const hasExcludeKeyword = excludeKeywords.some(kw => text.includes(kw));
 
   return hasRelevantKeyword && !hasExcludeKeyword;

@@ -185,21 +185,94 @@ function decodeHTMLEntities(text: string): string {
 
 /**
  * Check if tweet is relevant for trading signals
+ *
+ * Philosophy: Collect BROADLY, let Claude decide what's tradeable.
+ * Market-moving signals come from many sources:
+ * - Direct trading calls
+ * - Geopolitical events
+ * - Macroeconomic news
+ * - Regulatory developments
+ * - Protocol/company news
  */
 function isTradingRelevant(tweet: Tweet): boolean {
   const text = tweet.text.toLowerCase();
 
-  // Trading keywords
-  const keywords = [
-    "long", "short", "buy", "sell", "bullish", "bearish",
-    "entry", "target", "stop", "breakout", "breakdown",
-    "btc", "eth", "sol", "bitcoin", "ethereum", "solana",
-    "support", "resistance", "accumulate", "dump", "pump",
-    "chart", "setup", "position", "dca", "leverage",
+  // ==========================================================================
+  // CRYPTO & TRADING KEYWORDS
+  // ==========================================================================
+  const cryptoKeywords = [
+    // Direct trading
+    "long", "short", "buy", "sell", "bullish", "bearish", "bid", "ask",
+    "entry", "target", "stop", "breakout", "breakdown", "reversal",
+    "support", "resistance", "accumulate", "dump", "pump", "moon",
+    "chart", "setup", "position", "dca", "leverage", "liquidation",
+    "ath", "atl", "dip", "rally", "crash", "correction", "bottom", "top",
+
+    // Major cryptos
+    "btc", "eth", "sol", "bitcoin", "ethereum", "solana", "xrp", "bnb",
+    "ada", "doge", "avax", "matic", "dot", "link", "uni", "aave",
+    "arbitrum", "optimism", "base", "polygon",
+
+    // DeFi & crypto concepts
+    "defi", "nft", "dao", "staking", "yield", "tvl", "liquidity",
+    "whale", "wallet", "exchange", "cex", "dex", "swap",
+    "halving", "merge", "upgrade", "fork", "airdrop",
+    "usdt", "usdc", "stablecoin",
   ];
 
+  // ==========================================================================
+  // GEOPOLITICAL & MACRO KEYWORDS
+  // ==========================================================================
+  const geopoliticalKeywords = [
+    // Central banks & monetary policy
+    "fed", "federal reserve", "fomc", "rate cut", "rate hike", "interest rate",
+    "powell", "yellen", "ecb", "boj", "pboc", "central bank",
+    "qe", "qt", "quantitative", "tightening", "easing", "pivot",
+    "inflation", "cpi", "ppi", "gdp", "employment", "jobs", "unemployment",
+    "recession", "stagflation", "soft landing", "hard landing",
+
+    // Geopolitics
+    "war", "conflict", "sanction", "tariff", "trade war", "embargo",
+    "russia", "ukraine", "china", "taiwan", "iran", "israel", "gaza",
+    "nato", "brics", "opec", "oil", "energy", "commodity",
+    "election", "trump", "biden", "congress", "senate", "vote",
+    "geopolitical", "military", "nuclear", "missile",
+
+    // Regulatory
+    "sec", "cftc", "doj", "fbi", "irs", "treasury", "gensler",
+    "regulation", "lawsuit", "court", "judge", "ruling", "settlement",
+    "ban", "approve", "reject", "etf", "spot etf", "bitcoin etf",
+    "legal", "illegal", "compliance", "enforcement",
+
+    // Economic indicators
+    "dollar", "dxy", "yen", "euro", "yuan", "currency",
+    "bond", "yield", "treasury", "debt", "deficit", "spending",
+    "bank", "banking", "credit", "lending", "default", "bankruptcy",
+    "stock", "equity", "sp500", "nasdaq", "dow", "index",
+  ];
+
+  // ==========================================================================
+  // MARKET EVENTS & SENTIMENT
+  // ==========================================================================
+  const marketKeywords = [
+    // Market events
+    "hack", "exploit", "breach", "stolen", "scam", "rug", "fraud",
+    "partnership", "acquisition", "merger", "ipo", "listing", "delist",
+    "launch", "release", "update", "announcement", "breaking",
+    "institutional", "blackrock", "fidelity", "grayscale", "microstrategy",
+    "adoption", "mainstream", "mass adoption",
+
+    // Sentiment
+    "fear", "greed", "panic", "euphoria", "fomo", "fud",
+    "sentiment", "outlook", "forecast", "prediction",
+    "risk", "safe haven", "flight to safety",
+    "capitulation", "accumulation", "distribution",
+  ];
+
+  const allKeywords = [...cryptoKeywords, ...geopoliticalKeywords, ...marketKeywords];
+
   // Check for at least one keyword
-  return keywords.some(kw => text.includes(kw));
+  return allKeywords.some(kw => text.includes(kw));
 }
 
 /**

@@ -82,7 +82,7 @@ export const POLLING_CONFIG = {
   },
 
   // Maximum age of content to process (don't process old stuff on first run)
-  maxContentAgeMs: 60 * 60 * 1000, // 1 hour
+  maxContentAgeMs: 24 * 60 * 60 * 1000, // 24 hours - let Claude decide relevance
 
   // Rate limiting
   rateLimits: {
