@@ -21,6 +21,7 @@ const TIERS = [
     cta: "Get Started",
     highlighted: false,
     isPaid: false,
+    comingSoon: false,
   },
   {
     name: "Pro",
@@ -36,9 +37,10 @@ const TIERS = [
       "API access",
       "Priority support",
     ],
-    cta: "Upgrade to Pro",
+    cta: "Coming Soon",
     highlighted: true,
     isPaid: true,
+    comingSoon: true,
   },
 ];
 
@@ -425,8 +427,9 @@ export default function PricingPage() {
             </ul>
 
             <NeoButton
-              onClick={tier.isPaid ? handleUpgrade : handleFreeStart}
-              className="w-full justify-center"
+              onClick={tier.comingSoon ? undefined : (tier.isPaid ? handleUpgrade : handleFreeStart)}
+              disabled={tier.comingSoon}
+              className={`w-full justify-center ${tier.comingSoon ? "opacity-60 cursor-not-allowed" : ""}`}
             >
               {tier.cta}
             </NeoButton>
